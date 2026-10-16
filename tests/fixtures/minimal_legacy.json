@@ -1,0 +1,66 @@
+{
+  "students": {
+    "1001": {"name": "测试学生一", "password": "pass123", "password_reset_required": false},
+    "1002": {"name": "测试学生二", "password": "pass456", "password_reset_required": false}
+  },
+  "admins": {
+    "system": {"password": "adminpass", "role": "system_admin", "department": ""},
+    "admin": {"password": "adminpass", "role": "admin", "department": "团委"}
+  },
+  "categories": {
+    "思想品德": {"required_credits": 2},
+    "学业发展": {"required_credits": 1},
+    "文体活动": {"required_credits": 1}
+  },
+  "departments": ["团委", "学生会"],
+  "total_required_credits": 3,
+  "email_config": {
+    "service_email": "",
+    "service_email_password": "",
+    "student_email_suffix": "@example.edu.cn"
+  },
+  "activities": {
+    "activity-1": {
+      "name": "测试活动",
+      "categories": ["思想品德", "学业发展", "文体活动"],
+      "department": "团委",
+      "created_by": "admin",
+      "allowed_editors": ["admin"],
+      "has_questionnaire": false,
+      "questionnaire_start": "",
+      "questionnaire_end": "",
+      "max_participants": 0,
+      "records": [
+        {
+          "record_id": "record-1",
+          "record_name": "第一次记录",
+          "entries": [
+            {"student_id": "1001", "credits": 2, "categories": ["思想品德", "学业发展"]},
+            {"student_id": "1001", "credits": 1, "categories": ["学业发展", "文体活动"]},
+            {"student_id": "9999", "credits": 1, "categories": ["文体活动"]}
+          ]
+        }
+      ]
+    }
+  },
+  "registration_questionnaires": {
+    "reg-1": {
+      "student_id": "1001",
+      "name": "测试学生一",
+      "phone": "13800000000",
+      "wechat": "wechat1",
+      "suggestion": "",
+      "submit_time": "2025-01-01 10:00:00"
+    },
+    "reg-2": {
+      "student_id": "1002",
+      "name": "测试学生二",
+      "phone": "13900000000",
+      "wechat": "wechat2",
+      "suggestion": "",
+      "submit_time": "2025-01-01 10:01:00"
+    }
+  },
+  "activity_questionnaires": {},
+  "questionnaire_responses": {}
+}
