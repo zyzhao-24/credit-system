@@ -1,0 +1,201 @@
+/* 管理员界面专用配色 - 优雅红色主题 */
+
+/* 主色调：柔和红色系 */
+:root {
+    --admin-primary: #e74856;
+    --admin-primary-hover: #d13438;
+    --admin-primary-active: #b52e31;
+    --admin-secondary: #ff8c94;
+    --admin-success: #10893e;
+    --admin-danger: #c50f1f;
+    --admin-warning: #ff8c00;
+    --admin-add: #10893e;  /* 添加按钮使用绿色 */
+    --admin-add-hover: #0e7a38;
+    --admin-bg-light: #fff5f5;
+    --admin-border: rgba(231, 72, 86, 0.15);
+}
+
+/* 头部样式 - 更柔和的渐变 */
+.header {
+    background: linear-gradient(135deg, #e74856 0%, #ff8c94 100%);
+    border-radius: 8px;
+    padding: 24px 32px;
+    margin-bottom: 24px;
+}
+
+.header h1 {
+    color: white;
+    text-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* 标签页样式 - 更柔和的交互 */
+.tab {
+    color: #605e5c;
+}
+
+.tab.active {
+    background: var(--admin-primary);
+    color: white;
+    box-shadow: 0 2px 8px rgba(231, 72, 86, 0.2);
+}
+
+.tab:hover:not(.active) {
+    background: var(--admin-bg-light);
+    color: var(--admin-primary);
+}
+
+/* 按钮样式 - 默认红色，更柔和的阴影 */
+button:not(.secondary):not(.danger):not(.success):not(.logout-btn):not(.add-btn) {
+    background: var(--admin-primary);
+    box-shadow: 0 2px 6px rgba(231, 72, 86, 0.25);
+}
+
+button:not(.secondary):not(.danger):not(.success):not(.logout-btn):not(.add-btn):hover {
+    background: var(--admin-primary-hover);
+    box-shadow: 0 4px 12px rgba(231, 72, 86, 0.35);
+}
+
+button:not(.secondary):not(.danger):not(.success):not(.logout-btn):not(.add-btn):active {
+    background: var(--admin-primary-active);
+}
+
+/* 添加按钮 - 绿色 */
+button.add-btn {
+    background: var(--admin-add);
+    box-shadow: 0 2px 6px rgba(16, 137, 62, 0.25);
+}
+
+button.add-btn:hover {
+    background: var(--admin-add-hover);
+    box-shadow: 0 4px 12px rgba(16, 137, 62, 0.35);
+}
+
+button.secondary {
+    background: #f3f2f1;
+    color: #323130;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+}
+
+button.secondary:hover {
+    background: #e1dfdd;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+button.success {
+    background: var(--admin-success);
+    box-shadow: 0 2px 6px rgba(16, 137, 62, 0.25);
+}
+
+button.success:hover {
+    background: var(--admin-add-hover);
+    box-shadow: 0 4px 12px rgba(16, 137, 62, 0.35);
+}
+
+button.danger {
+    background: var(--admin-danger);
+    box-shadow: 0 2px 6px rgba(197, 15, 31, 0.25);
+}
+
+button.danger:hover {
+    background: #a50d18;
+    box-shadow: 0 4px 12px rgba(197, 15, 31, 0.35);
+}
+
+/* 退出按钮 */
+.logout-btn {
+    background: rgba(255, 255, 255, 0.2);
+    color: white;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.logout-btn:hover {
+    background: rgba(255, 255, 255, 0.3);
+}
+
+/* 链接颜色 */
+a {
+    color: var(--admin-primary);
+}
+
+a:hover {
+    color: var(--admin-primary-hover);
+}
+
+/* 进度条 */
+.progress-bar-fill {
+    background: linear-gradient(90deg, var(--admin-primary), var(--admin-secondary));
+}
+
+/* 状态徽章 */
+.status-badge.status-qualified {
+    background: rgba(16, 124, 16, 0.1);
+    color: var(--admin-success);
+    border: 1px solid rgba(16, 124, 16, 0.2);
+}
+
+.status-badge.status-unqualified {
+    background: rgba(197, 15, 31, 0.1);
+    color: var(--admin-danger);
+    border: 1px solid rgba(197, 15, 31, 0.2);
+}
+
+/* 表格样式 - 更柔和的背景 */
+table thead {
+    background: var(--admin-bg-light);
+    border-bottom: 2px solid var(--admin-border);
+}
+
+table tbody tr:hover {
+    background: rgba(231, 72, 86, 0.04);
+}
+
+/* 卡片样式 */
+.info-card {
+    border-left: 3px solid var(--admin-primary);
+    background: var(--admin-bg-light);
+}
+
+/* 输入框焦点 */
+input:focus,
+textarea:focus,
+select:focus {
+    border-color: var(--admin-primary);
+    outline: 2px solid rgba(231, 72, 86, 0.15);
+    box-shadow: 0 0 0 3px rgba(231, 72, 86, 0.08);
+}
+
+/* 复选框选中 */
+input[type="checkbox"]:checked {
+    background: var(--admin-primary);
+    border-color: var(--admin-primary);
+}
+
+/* 模态框标题 */
+.modal-content h2 {
+    color: var(--admin-primary);
+    border-bottom: 2px solid var(--admin-border);
+    padding-bottom: 12px;
+    margin-bottom: 20px;
+}
+
+/* 活动卡片样式优化 */
+.activity-card {
+    background: white;
+    border: 1px solid var(--admin-border);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 12px;
+    transition: all 0.2s ease;
+}
+
+.activity-card:hover {
+    border-color: var(--admin-primary);
+    box-shadow: 0 4px 12px rgba(231, 72, 86, 0.12);
+    transform: translateY(-2px);
+}
+
+.activity-card h4 {
+    color: var(--admin-primary);
+    margin-bottom: 8px;
+    font-size: 15px;
+}

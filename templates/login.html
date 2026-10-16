@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="shortcut icon" href="{{ url_for('static', filename='favicon.ico') }}">
+    <title>团校积分系统 - 学生登录</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        body {
+            background: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+        }
+        
+        .login-container {
+            margin: 0;
+            animation: slideUp 0.4s ease;
+            max-width: 520px;
+            width: 90%;
+            background: white;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+        }
+        
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        .login-header {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+        
+        .login-icon {
+            width: 80px;
+            height: 80px;
+            background: linear-gradient(135deg, #0078d4, #00bcf2);
+            border-radius: 20px;
+            margin: 0 auto 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 40px;
+            color: white;
+            box-shadow: 0 8px 24px rgba(0, 120, 212, 0.3);
+        }
+        
+        .login-title {
+            font-size: 28px;
+            font-weight: 600;
+            color: #1f1f1f;
+            margin: 0;
+        }
+        
+        .login-subtitle {
+            font-size: 15px;
+            color: #616161;
+            margin-top: 12px;
+        }
+        
+        .form-group input {
+            width: 100%;
+            padding: 16px 18px;
+            font-size: 16px;
+        }
+        
+        button[type="submit"] {
+            padding: 16px;
+            font-size: 16px;
+        }
+        
+        #message {
+            margin-top: 16px;
+            padding: 12px;
+            border-radius: 6px;
+            text-align: center;
+            font-size: 13px;
+            display: none;
+        }
+        
+        #message.error {
+            background: rgba(209, 52, 56, 0.1);
+            color: #d13438;
+            border: 1px solid rgba(209, 52, 56, 0.2);
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container login-container">
+        <div class="login-header">
+            <div class="login-icon">
+                <img src="/static/icon.svg" alt="图标" style="width: 60px; height: 60px;">
+            </div>
+            <h1 class="login-title">团校积分系统</h1>
+            <p class="login-subtitle">学生登录</p>
+        </div>
+        <form id="loginForm">
+            <div class="form-group">
+                <label>学号</label>
+                <input type="text" id="username" required placeholder="请输入学号" autocomplete="username" pattern="[0-9]*" inputmode="numeric">
+            </div>
+            <div class="form-group">
+                <label>密码</label>
+                <input type="password" id="password" required placeholder="请输入密码" autocomplete="current-password">
+            </div>
+            <button type="submit" style="width: 100%; margin-top: 12px; padding: 14px;">登录</button>
+            <div style="text-align: center; margin-top: 16px; display: flex; justify-content: space-between; padding: 0 4px;">
+                <a href="javascript:void(0)" onclick="showForgotPasswordModal()" style="color: #0078d4; text-decoration: none; font-size: 14px;">忘记密码？</a>
+                <a href="javascript:void(0)" onclick="showRegisterModal()" style="color: #0078d4; text-decoration: none; font-size: 14px;">还没有账号？立即注册</a>
+            </div>
+        </form>
+        <p id="message"></p>
+    </div>
+    
+    <!-- 注册模态框 -->
+    <div id="registerModal" class="modal">
+        <div class="modal-content" style="max-width: 500px; width: 90%; padding: 24px; margin: 10vh auto 0; max-height: 80vh; overflow-y: auto;">
+            <h2 style="font-size: 20px; margin-bottom: 8px; font-weight: 600;">初级团校报名注册</h2>
+            <p style="color: #666; margin-bottom: 20px; font-size: 13px; line-height: 1.5;">请填写以下信息完成注册</p>
+            
+            <div class="form-group" style="margin-bottom: 14px;">
+                <label style="font-size: 13px;">您的姓名 <span style="color: #d13438;">*</span></label>
+                <input type="text" id="regName" placeholder="请输入真实姓名" required style="padding: 10px 12px;">
+            </div>
+            
+            <div class="form-group" style="margin-bottom: 14px;">
+                <label style="font-size: 13px;">您的学号 <span style="color: #d13438;">*</span></label>
+                <input type="text" id="regStudentId" placeholder="请输入学号" pattern="[0-9]*" inputmode="numeric" required style="padding: 10px 12px;">
+            </div>
+            
+            <div class="form-group" style="margin-bottom: 14px;">
+                <label style="font-size: 13px;">您的手机号码 <span style="color: #d13438;">*</span></label>
+                <input type="tel" id="regPhone" placeholder="请输入11位手机号" pattern="[0-9]{11}" inputmode="numeric" required style="padding: 10px 12px;">
+            </div>
+            
+            <div class="form-group" style="margin-bottom: 14px;">
+                <label style="font-size: 13px;">您的微信号 <span style="color: #d13438;">*</span></label>
+                <input type="text" id="regWechat" placeholder="请输入微信号" required style="padding: 10px 12px;">
+            </div>
+            
+            <div class="form-group" style="margin-bottom: 14px;">
+                <label style="font-size: 13px;">请设置初始密码 <span style="color: #d13438;">*</span></label>
+                <input type="password" id="regPassword" placeholder="至少6位字符" required style="padding: 10px 12px;">
+            </div>
+            
+            <div class="form-group" style="margin-bottom: 14px;">
+                <label style="font-size: 13px;">确认密码 <span style="color: #d13438;">*</span></label>
+                <input type="password" id="regPasswordConfirm" placeholder="请再次输入密码" required style="padding: 10px 12px;">
+            </div>
+            
+            <div class="form-group" style="margin-bottom: 14px;">
+                <label style="font-size: 13px;">您对今年的初级团校活动有什么建议呢？</label>
+                <textarea id="regSuggestion" placeholder="请输入您的建议（选填）" rows="3" style="padding: 10px 12px; resize: vertical; font-family: inherit;"></textarea>
+            </div>
+            
+            <div style="display: flex; gap: 10px; margin-top: 20px;">
+                <button onclick="submitRegister()" style="flex: 1; padding: 12px; background: #0078d4;">提交注册</button>
+                <button class="secondary" onclick="closeRegisterModal()" style="flex: 1; padding: 12px;">取消</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 忘记密码模态框 -->
+    <div id="forgotPasswordModal" class="modal">
+        <div class="modal-content" style="max-width: 400px; width: 90%; padding: 24px; margin: 20vh auto 0;">
+            <h2 style="font-size: 18px; margin-bottom: 8px; font-weight: 600;">忘记密码</h2>
+            <p style="color: #666; margin-bottom: 16px; font-size: 13px; line-height: 1.5;">请输入您的学号，系统将发送新密码到您的邮箱</p>
+            <div class="form-group" style="margin-bottom: 16px;">
+                <label style="font-size: 13px;">学号</label>
+                <input type="text" id="forgotStudentId" placeholder="请输入学号" pattern="[0-9]*" inputmode="numeric" style="padding: 10px 12px;">
+            </div>
+            <div style="display: flex; gap: 10px; margin-top: 20px;">
+                <button onclick="requestPasswordReset()" style="flex: 1; padding: 10px;">发送重置邮件</button>
+                <button class="secondary" onclick="closeForgotPasswordModal()" style="flex: 1; padding: 10px;">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // SHA-256 哈希函数（纯 JavaScript 实现，兼容 HTTP 环境）
+        async function sha256(message) {
+            // 尝试使用 crypto.subtle（HTTPS 或 localhost）
+            if (window.crypto && window.crypto.subtle) {
+                try {
+                    const msgBuffer = new TextEncoder().encode(message);
+                    const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+                    const hashArray = Array.from(new Uint8Array(hashBuffer));
+                    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+                    return hashHex;
+                } catch (e) {
+                    console.warn('crypto.subtle 不可用，使用纯 JS 实现');
+                }
+            }
+            
+            // 纯 JavaScript SHA-256 实现（用于 HTTP 环境）
+            function rightRotate(value, amount) {
+                return (value >>> amount) | (value << (32 - amount));
+            }
+            
+            const mathPow = Math.pow;
+            const maxWord = mathPow(2, 32);
+            const lengthProperty = 'length';
+            let i, j;
+            let result = '';
+            
+            const words = [];
+            const asciiBitLength = message[lengthProperty] * 8;
+            
+            let hash = sha256.h = sha256.h || [];
+            const k = sha256.k = sha256.k || [];
+            let primeCounter = k[lengthProperty];
+            
+            const isComposite = {};
+            for (let candidate = 2; primeCounter < 64; candidate++) {
+                if (!isComposite[candidate]) {
+                    for (i = 0; i < 313; i += candidate) {
+                        isComposite[i] = candidate;
+                    }
+                    hash[primeCounter] = (mathPow(candidate, .5) * maxWord) | 0;
+                    k[primeCounter++] = (mathPow(candidate, 1 / 3) * maxWord) | 0;
+                }
+            }
+            
+            message += '\x80';
+            while (message[lengthProperty] % 64 - 56) message += '\x00';
+            for (i = 0; i < message[lengthProperty]; i++) {
+                j = message.charCodeAt(i);
+                if (j >> 8) return;
+                words[i >> 2] |= j << ((3 - i) % 4) * 8;
+            }
+            words[words[lengthProperty]] = ((asciiBitLength / maxWord) | 0);
+            words[words[lengthProperty]] = (asciiBitLength);
+            
+            for (j = 0; j < words[lengthProperty];) {
+                const w = words.slice(j, j += 16);
+                const oldHash = hash;
+                hash = hash.slice(0, 8);
+                
+                for (i = 0; i < 64; i++) {
+                    const w15 = w[i - 15], w2 = w[i - 2];
+                    
+                    const a = hash[0], e = hash[4];
+                    const temp1 = hash[7]
+                        + (rightRotate(e, 6) ^ rightRotate(e, 11) ^ rightRotate(e, 25))
+                        + ((e & hash[5]) ^ ((~e) & hash[6]))
+                        + k[i]
+                        + (w[i] = (i < 16) ? w[i] : (
+                            w[i - 16]
+                            + (rightRotate(w15, 7) ^ rightRotate(w15, 18) ^ (w15 >>> 3))
+                            + w[i - 7]
+                            + (rightRotate(w2, 17) ^ rightRotate(w2, 19) ^ (w2 >>> 10))
+                        ) | 0
+                        );
+                    
+                    const temp2 = (rightRotate(a, 2) ^ rightRotate(a, 13) ^ rightRotate(a, 22))
+                        + ((a & hash[1]) ^ (a & hash[2]) ^ (hash[1] & hash[2]));
+                    
+                    hash = [(temp1 + temp2) | 0].concat(hash);
+                    hash[4] = (hash[4] + temp1) | 0;
+                }
+                
+                for (i = 0; i < 8; i++) {
+                    hash[i] = (hash[i] + oldHash[i]) | 0;
+                }
+            }
+            
+            for (i = 0; i < 8; i++) {
+                for (j = 3; j + 1; j--) {
+                    const b = (hash[i] >> (j * 8)) & 255;
+                    result += ((b < 16) ? 0 : '') + b.toString(16);
+                }
+            }
+            return result;
+        }
+
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            
+            try {
+                // 对密码进行 SHA-256 哈希
+                const password_hash = await sha256(password);
+                
+                const response = await fetch('/api/login/student', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({username, password_hash}),
+                    credentials: 'include'  // 重要！允许发送和接收 Cookie
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    window.location.href = '/student';
+                } else {
+                    const messageEl = document.getElementById('message');
+                    messageEl.textContent = data.message || '学号或密码错误';
+                    messageEl.className = 'error';
+                }
+            } catch (error) {
+                const messageEl = document.getElementById('message');
+                messageEl.textContent = '登录失败，请重试: ' + error.message;
+                messageEl.className = 'error';
+                console.error('登录错误详情:', error);
+            }
+        });
+        
+        // 注册功能
+        function showRegisterModal() {
+            const modal = document.getElementById('registerModal');
+            modal.style.display = 'block';
+            // 清空表单
+            document.getElementById('regName').value = '';
+            document.getElementById('regStudentId').value = '';
+            document.getElementById('regPhone').value = '';
+            document.getElementById('regWechat').value = '';
+            document.getElementById('regPassword').value = '';
+            document.getElementById('regPasswordConfirm').value = '';
+            document.getElementById('regSuggestion').value = '';
+            setTimeout(() => {
+                document.getElementById('regName').focus();
+            }, 100);
+        }
+        
+        function closeRegisterModal() {
+            document.getElementById('registerModal').style.display = 'none';
+        }
+        
+        async function submitRegister() {
+            const name = document.getElementById('regName').value.trim();
+            const student_id = document.getElementById('regStudentId').value.trim();
+            const phone = document.getElementById('regPhone').value.trim();
+            const wechat = document.getElementById('regWechat').value.trim();
+            const password = document.getElementById('regPassword').value;
+            const passwordConfirm = document.getElementById('regPasswordConfirm').value;
+            const suggestion = document.getElementById('regSuggestion').value.trim();
+            
+            // 验证必填字段
+            if (!name) {
+                alert('请输入姓名');
+                return;
+            }
+            
+            if (!student_id) {
+                alert('请输入学号');
+                return;
+            }
+            
+            if (!/^\d+$/.test(student_id)) {
+                alert('学号只能包含数字');
+                return;
+            }
+            
+            if (!phone) {
+                alert('请输入手机号码');
+                return;
+            }
+            
+            if (!/^1[3-9]\d{9}$/.test(phone)) {
+                alert('请输入正确的11位手机号码');
+                return;
+            }
+            
+            if (!wechat) {
+                alert('请输入微信号');
+                return;
+            }
+            
+            if (!password) {
+                alert('请设置密码');
+                return;
+            }
+            
+            if (password.length < 6) {
+                alert('密码至少需要6位字符');
+                return;
+            }
+            
+            if (password !== passwordConfirm) {
+                alert('两次输入的密码不一致');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/student/register', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        name,
+                        student_id,
+                        phone,
+                        wechat,
+                        password,
+                        suggestion
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert('✓ 注册成功！请使用学号和密码登录');
+                    closeRegisterModal();
+                    // 自动填充学号
+                    document.getElementById('username').value = student_id;
+                    document.getElementById('password').focus();
+                } else {
+                    alert('✗ ' + (data.message || '注册失败'));
+                }
+            } catch (error) {
+                alert('系统错误：' + error.message);
+                console.error('注册错误:', error);
+            }
+        }
+        
+        // 忘记密码功能
+        function showForgotPasswordModal() {
+            const modal = document.getElementById('forgotPasswordModal');
+            modal.style.display = 'block';
+            document.getElementById('forgotStudentId').value = '';
+            setTimeout(() => {
+                document.getElementById('forgotStudentId').focus();
+            }, 100);
+        }
+        
+        function closeForgotPasswordModal() {
+            document.getElementById('forgotPasswordModal').style.display = 'none';
+        }
+        
+        async function requestPasswordReset() {
+            const student_id = document.getElementById('forgotStudentId').value.trim();
+            
+            if (!student_id) {
+                alert('请输入学号');
+                return;
+            }
+            
+            if (!/^\d+$/.test(student_id)) {
+                alert('学号只能包含数字');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/student/forgot_password', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({student_id})
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert('✓ ' + data.message);
+                    closeForgotPasswordModal();
+                } else {
+                    if (data.already_requested) {
+                        // 已经申请过，显示特殊提示
+                        alert('⚠ ' + data.message);
+                    } else {
+                        alert('✗ ' + (data.message || '操作失败'));
+                    }
+                }
+            } catch (error) {
+                alert('系统错误：' + error.message);
+                console.error('忘记密码错误:', error);
+            }
+        }
+        
+        // 点击模态框外部关闭
+        window.onclick = function(event) {
+            const forgotModal = document.getElementById('forgotPasswordModal');
+            const registerModal = document.getElementById('registerModal');
+            if (event.target === forgotModal) {
+                closeForgotPasswordModal();
+            }
+            if (event.target === registerModal) {
+                closeRegisterModal();
+            }
+        }
+    </script>
+</body>
+</html>
