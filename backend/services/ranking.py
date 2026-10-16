@@ -1,0 +1,59 @@
+"""Questionnaire ranking and waitlist helpers."""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any
+
+from backend.models import ActivityQuestionnaire, QuestionnaireResponse
+from backend.services.legacy_import import DATETIME_FORMAT
+
+
+def format_datetime(value: datetime | None) -> str:
+    return value.strftime(DATETIME_FORMAT) if value else ""
+
+
+def active_rank_map(questionnaire_id: str) -> dict[str, int]:
+    responses = (
+        QuestionnaireResponse.query.filter_by(questionnaire_id=questionnaire_id, status="active")
+        .order_by(QuestionnaireResponse.submit_time.asc(), QuestionnaireResponse.response_pk.asc())
+        .all()
+    )
+    return {response.response_id: index for index, response in enumerate(responses, 1)}
+
+
+def response_status(response: QuestionnaireResponse, questionnaire: ActivityQuestionnaire, now: datetime | None = None) -> dict[str, Any]:
+    now = now or datetime.now()
+    ranks = active_rank_map(response.questionnaire_id)
+    rank = ranks.get(response.response_id, 0) if response.status == "active" else 0
+    is_waitlist = False
+    is_selected = False
+    if response.status == "active":
+        if questionnaire.max_participants > 0:
+            is_selected = rank <= questionnaire.max_participants
+            is_waitlist = rank > questionnaire.max_participants
+        else:
+            is_selected = True
+    return {
+        "rank": rank,
+        "is_waitlist": is_waitlist,
+        "is_selected": is_selected,
+        "is_ended": now > questionnaire.end_time,
+    }
+
+
+def response_payload(response: QuestionnaireResponse, questionnaire: ActivityQuestionnaire) -> dict[str, Any]:
+    status = response_status(response, questionnaire)
+    return {
+        "response_id": response.response_id,
+        "questionnaire_id": response.questionnaire_id,
+        "student_id": response.student_id,
+        "student_name": response.student_name,
+        "phone": response.phone,
+        "wechat": response.wechat,
+        "intended_category": response.intended_category,
+        "custom_answers": response.custom_answers or {},
+        "submit_time": format_datetime(response.submit_time),
+        "status": response.status,
+        **status,
+    }

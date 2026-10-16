@@ -20,7 +20,7 @@ def app(tmp_path):
     database_path = tmp_path / "test.db"
     app = create_app(
         TESTING=True,
-        SECRET_KEY="test-secret-key",
+        SECRET_KEY="test-secret-key-with-at-least-32-bytes",
         SQLALCHEMY_DATABASE_URI=f"sqlite:///{database_path.as_posix()}",
         CORS_ORIGINS=[],
     )

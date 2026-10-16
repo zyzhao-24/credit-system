@@ -53,7 +53,8 @@ class QuestionnaireResponse(db.Model):
         db.CheckConstraint("status IN ('active', 'cancelled')", name="ck_responses_status"),
     )
 
-    response_id = db.Column(db.String(36), primary_key=True)
+    response_pk = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    response_id = db.Column(db.String(36), nullable=False, unique=True, index=True)
     questionnaire_id = db.Column(
         db.String(36),
         db.ForeignKey("activity_questionnaires.questionnaire_id", ondelete="CASCADE"),

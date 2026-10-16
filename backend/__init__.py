@@ -43,6 +43,23 @@ def create_app(config_object: type[Config] | None = None, **overrides) -> Flask:
 
     # Import models before migrations or create_all.
     from backend import models  # noqa: F401
+    from backend.api.auth import auth_bp
+    from backend.api.admin_activities import admin_activities_bp
+    from backend.api.admin_settings import admin_settings_bp
+    from backend.api.admin_students import admin_students_bp
+    from backend.api.admin_questionnaires import admin_questionnaires_bp
+    from backend.api.admin_reports import admin_reports_bp
+    from backend.api.questionnaires import questionnaires_bp
+    from backend.api.student import student_bp
+
+    app.register_blueprint(auth_bp)
+    app.register_blueprint(admin_activities_bp)
+    app.register_blueprint(admin_settings_bp)
+    app.register_blueprint(admin_students_bp)
+    app.register_blueprint(admin_questionnaires_bp)
+    app.register_blueprint(admin_reports_bp)
+    app.register_blueprint(questionnaires_bp)
+    app.register_blueprint(student_bp)
 
     cors_origins = app.config.get("CORS_ORIGINS", [])
     if cors_origins:

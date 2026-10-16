@@ -1,0 +1,245 @@
+"""System settings and administrator account API."""
+
+from __future__ import annotations
+
+from flask import Blueprint, current_app, g, jsonify, request
+from sqlalchemy import func
+
+from backend.auth.decorators import require_admin, require_system_admin
+from backend.extensions import db
+from backend.models import Activity, ActivityAllowedEditor, Admin, Category, Department, EmailConfig, Setting
+from backend.services.emailer import send_test_email
+from backend.utils.crypto import encrypt_secret
+from backend.utils.passwords import client_password_digest, hash_password_digest
+
+
+admin_settings_bp = Blueprint("admin_settings", __name__)
+
+
+def _error(message: str, status: int = 200, **extra):
+    return jsonify({"success": False, "message": message, **extra}), status
+
+
+def _number(value):
+    number = float(value)
+    return int(number) if number.is_integer() else number
+
+
+@admin_settings_bp.route("/api/admin/categories", methods=["GET", "POST", "PUT", "DELETE"])
+@require_admin
+def manage_categories():
+    if request.method == "GET":
+        categories = [
+            {"name": category.name, "required_credits": _number(category.required_credits)}
+            for category in Category.query.order_by(Category.position.asc()).all()
+        ]
+        return jsonify({"success": True, "categories": categories})
+
+    if g.current_identity.get("role") != "system_admin":
+        return _error("仅系统管理员可以管理类别", 403)
+
+    data = request.get_json(silent=True) or {}
+    if request.method == "POST":
+        name = data.get("name", "").strip()
+        if not name:
+            return _error("类别名称不能为空")
+        if db.session.get(Category, name):
+            return _error("类别已存在")
+        position = db.session.query(func.max(Category.position)).scalar() or 0
+        db.session.add(
+            Category(
+                name=name,
+                required_credits=float(data.get("required_credits", 0)),
+                position=position + 1,
+            )
+        )
+        db.session.commit()
+        return jsonify({"success": True})
+
+    if request.method == "PUT":
+        name = data.get("name", "")
+        category = db.session.get(Category, name)
+        if category is None:
+            return _error("类别不存在")
+        if "required_credits" in data:
+            category.required_credits = float(data["required_credits"])
+        db.session.commit()
+        return jsonify({"success": True})
+
+    name = data.get("name", "")
+    category = db.session.get(Category, name)
+    if category is None:
+        return _error("类别不存在")
+    try:
+        db.session.delete(category)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return _error("该类别仍被活动或积分条目使用，无法删除")
+    return jsonify({"success": True})
+
+
+@admin_settings_bp.route("/api/admin/total_credits", methods=["GET", "POST"])
+@require_system_admin
+def manage_total_credits():
+    if request.method == "GET":
+        setting = db.session.get(Setting, "total_required_credits")
+        return jsonify(
+            {"success": True, "total_required_credits": _number(setting.value) if setting else 0}
+        )
+
+    data = request.get_json(silent=True) or {}
+    setting = db.session.get(Setting, "total_required_credits")
+    if setting is None:
+        setting = Setting(key="total_required_credits")
+        db.session.add(setting)
+    setting.value = str(data.get("total_required_credits", 0))
+    db.session.commit()
+    return jsonify({"success": True})
+
+
+@admin_settings_bp.route("/api/admin/email_config", methods=["GET", "POST"])
+@require_system_admin
+def manage_email_config():
+    config = db.session.get(EmailConfig, 1)
+    if config is None:
+        config = EmailConfig(id=1)
+        db.session.add(config)
+        db.session.flush()
+
+    if request.method == "GET":
+        return jsonify(
+            {
+                "success": True,
+                "email_config": {
+                    "service_email": config.service_email,
+                    "student_email_suffix": config.student_email_suffix,
+                    "has_password": bool(config.service_email_password_encrypted),
+                },
+            }
+        )
+
+    data = request.get_json(silent=True) or {}
+    config.service_email = data.get("service_email", "")
+    config.student_email_suffix = data.get("student_email_suffix", "")
+    if data.get("service_email_password"):
+        config.service_email_password_encrypted = encrypt_secret(
+            data["service_email_password"], current_app.config["SECRET_KEY"]
+        )
+    db.session.commit()
+    return jsonify({"success": True})
+
+
+@admin_settings_bp.post("/api/admin/test_email")
+@require_system_admin
+def test_email_config():
+    data = request.get_json(silent=True) or {}
+    test_email = data.get("test_email", "")
+    debug = bool(data.get("debug", False))
+    if not test_email:
+        return _error("请输入测试邮箱地址")
+    success, message, debug_info = send_test_email(test_email, debug)
+    status = 200
+    return jsonify({"success": success, "message": message, "debug_info": debug_info}), status
+
+
+@admin_settings_bp.route("/api/admin/departments", methods=["GET", "POST", "DELETE"])
+@require_admin
+def manage_departments():
+    if request.method == "GET":
+        departments = [
+            department.name
+            for department in Department.query.order_by(Department.position.asc()).all()
+        ]
+        return jsonify({"success": True, "departments": departments})
+
+    if g.current_identity.get("role") != "system_admin":
+        action = "添加" if request.method == "POST" else "删除"
+        return _error(f"仅系统管理员可以{action}部门", 403)
+
+    data = request.get_json(silent=True) or {}
+    name = data.get("department", "").strip()
+    if request.method == "POST":
+        if not name:
+            return _error("部门名称不能为空")
+        if Department.query.filter_by(name=name).first():
+            return _error("部门已存在")
+        position = db.session.query(func.max(Department.position)).scalar() or 0
+        db.session.add(Department(name=name, position=position + 1))
+        db.session.commit()
+        return jsonify({"success": True})
+
+    department = Department.query.filter_by(name=name).first()
+    if department is None:
+        return _error("部门不存在")
+    db.session.delete(department)
+    db.session.commit()
+    return jsonify({"success": True})
+
+
+@admin_settings_bp.route("/api/admin/admins", methods=["GET", "POST", "PUT", "DELETE"])
+@require_system_admin
+def manage_admins():
+    if request.method == "GET":
+        admins = [
+            {"admin_id": admin.admin_id, "role": admin.role, "department": admin.department}
+            for admin in Admin.query.order_by(Admin.admin_id.asc()).all()
+        ]
+        return jsonify({"success": True, "admins": admins})
+
+    data = request.get_json(silent=True) or {}
+    current_admin_id = g.current_identity.get("sub")
+
+    if request.method == "POST":
+        admin_id = data.get("admin_id", "").strip()
+        password = data.get("password", "admin123")
+        role = data.get("role", "admin")
+        department = data.get("department", "")
+        if not admin_id:
+            return _error("账号不能为空")
+        if role not in {"admin", "system_admin"}:
+            return _error("角色不正确")
+        if db.session.get(Admin, admin_id):
+            return _error("账号已存在")
+        db.session.add(
+            Admin(
+                admin_id=admin_id,
+                password_hash=hash_password_digest(client_password_digest(password)),
+                role=role,
+                department=department,
+            )
+        )
+        db.session.commit()
+        return jsonify({"success": True})
+
+    if request.method == "PUT":
+        admin_id = data.get("admin_id", "")
+        admin = db.session.get(Admin, admin_id)
+        if admin is None:
+            return _error("管理员不存在")
+        if admin_id == current_admin_id and "department" in data:
+            return _error("不能修改自己的部门")
+        if "password" in data:
+            admin.password_hash = hash_password_digest(client_password_digest(data["password"]))
+        if "role" in data:
+            if data["role"] not in {"admin", "system_admin"}:
+                return _error("角色不正确")
+            admin.role = data["role"]
+        if "department" in data:
+            admin.department = data["department"]
+        db.session.commit()
+        return jsonify({"success": True})
+
+    admin_id = data.get("admin_id", "")
+    admin = db.session.get(Admin, admin_id)
+    if admin is None:
+        return _error("管理员不存在")
+    if admin_id == current_admin_id:
+        return _error("不能删除自己的账号")
+    if admin.role == "system_admin":
+        return _error("不能删除系统管理员")
+    ActivityAllowedEditor.query.filter_by(admin_id=admin_id).delete()
+    Activity.query.filter_by(created_by=admin_id).update({"created_by": None})
+    db.session.delete(admin)
+    db.session.commit()
+    return jsonify({"success": True})
