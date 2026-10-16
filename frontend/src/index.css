@@ -1,0 +1,49 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #0078d4;
+  --color-primary-dark: #106ebe;
+  --color-danger: #d13438;
+  --color-danger-dark: #b52e31;
+  --color-success: #107c10;
+  --font-sans: "Microsoft YaHei", "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+
+body {
+  background-color: #f5f6f8;
+  color: #1f1f1f;
+}
+
+/* 打印支持：打印时只显示 .print-area 内容 */
+@media print {
+  @page {
+    margin: 10mm;
+    size: A4;
+  }
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  html,
+  body {
+    margin: 0;
+    padding: 0;
+    height: auto;
+    background: white !important;
+  }
+  body * {
+    visibility: hidden;
+  }
+  .print-area,
+  .print-area * {
+    visibility: visible;
+  }
+  .print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    background: white !important;
+    font-family: "Microsoft YaHei", sans-serif;
+  }
+}
