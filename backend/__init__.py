@@ -6,13 +6,15 @@ import os
 import sqlite3
 from pathlib import Path
 
-from flask import Flask, jsonify
+from flask import Flask, jsonify, send_from_directory
 from flask_cors import CORS
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
 
 from backend.config import Config, ProductionConfig
 from backend.extensions import db, migrate
+
+FRONTEND_DIST = Path(__file__).resolve().parents[1] / "frontend" / "dist"
 
 
 @event.listens_for(Engine, "connect")
@@ -74,5 +76,27 @@ def create_app(config_object: type[Config] | None = None, **overrides) -> Flask:
     @app.get("/api/health")
     def health():
         return jsonify({"success": True, "status": "ok"})
+
+    @app.get("/", defaults={"path": ""})
+    @app.get("/<path:path>")
+    def spa(path: str):
+        """Serve the React build; unknown non-API paths fall back to index.html."""
+        if path.startswith("api/") or path == "api":
+            return jsonify({"success": False, "message": "接口不存在"}), 404
+        if not FRONTEND_DIST.is_dir():
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "message": "前端尚未构建，请在 frontend/ 目录运行 npm run build",
+                    }
+                ),
+                503,
+            )
+        if path:
+            candidate = FRONTEND_DIST / path
+            if candidate.is_file() and FRONTEND_DIST in candidate.resolve().parents:
+                return send_from_directory(FRONTEND_DIST, path)
+        return send_from_directory(FRONTEND_DIST, "index.html")
 
     return app

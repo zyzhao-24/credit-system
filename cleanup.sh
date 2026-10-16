@@ -1,12 +1,13 @@
 #!/bin/bash
 # 团校积分系统 - 强制清理
+# 只停止本项目 server.pid 记录的进程，不再 pkill 全部 python 进程
 
 echo "========================================"
 echo "Tuanxiao Credit System - Force Cleanup"
 echo "========================================"
 echo ""
 echo "This will:"
-echo "- Kill all python processes related to deploy_server.py"
+echo "- Stop ONLY this project's server process (PID from server.pid)"
 echo "- Remove server.pid file"
 echo "- Remove server.log file"
 echo ""
@@ -20,20 +21,22 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
 fi
 
 echo ""
-echo "[INFO] Killing python processes..."
-pkill -f "python.*deploy_server.py" 2>/dev/null
-if [ $? -eq 0 ]; then
-    echo "[SUCCESS] Python processes killed"
-else
-    echo "[INFO] No python processes found"
-fi
-
-echo "[INFO] Removing PID file..."
 if [ -f "server.pid" ]; then
+    SERVER_PID=$(cat server.pid)
+    echo "[INFO] Stopping server process - PID: $SERVER_PID"
+    if kill $SERVER_PID 2>/dev/null; then
+        sleep 2
+        if ps -p $SERVER_PID > /dev/null 2>&1; then
+            kill -9 $SERVER_PID 2>/dev/null
+        fi
+        echo "[SUCCESS] Server process stopped"
+    else
+        echo "[INFO] Process $SERVER_PID not found or already stopped"
+    fi
     rm -f server.pid
     echo "[SUCCESS] PID file removed"
 else
-    echo "[INFO] PID file not found"
+    echo "[INFO] PID file not found - server is not running via the scripts"
 fi
 
 echo "[INFO] Removing log file..."

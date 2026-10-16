@@ -18,7 +18,8 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+# legacy/ holds the archived pre-refactor app; keep it importable for baselines.
+sys.path.insert(0, str(ROOT / "legacy"))
 
 from database import Database  # noqa: E402
 import app as legacy_app  # noqa: E402

@@ -40,6 +40,13 @@ class ProductionConfig(Config):
     """Production configuration requires an explicit secret key."""
 
     ENV = "production"
+    # 生产环境前后端同源部署，默认不开放任何跨域来源；
+    # 仅在显式设置 CORS_ORIGINS 环境变量时才放行。
+    CORS_ORIGINS = [
+        origin.strip()
+        for origin in os.getenv("CORS_ORIGINS", "").split(",")
+        if origin.strip()
+    ]
 
     def __init__(self) -> None:
         if not os.getenv("SECRET_KEY"):

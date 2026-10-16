@@ -8,7 +8,6 @@ echo Tuanxiao Credit System - Stop Server
 echo ========================================
 echo.
 
-REM Check if PID file exists
 if not exist %PID_FILE% (
     echo [INFO] Server is not running - PID file not found
     echo.
@@ -16,13 +15,11 @@ if not exist %PID_FILE% (
     exit /b 0
 )
 
-REM Read PID
 set /p SERVER_PID=<%PID_FILE%
-
 echo [INFO] Found PID: !SERVER_PID!
 
-REM Check if process exists
-tasklist /FI "PID eq !SERVER_PID!" 2>nul | find /I /N "python.exe">nul
+REM Verify the PID belongs to a running process before killing
+tasklist /FI "PID eq !SERVER_PID!" 2>nul | find /I /N "python">nul
 if errorlevel 1 (
     echo [INFO] Server is not running - process not found
     echo [INFO] Cleaning up PID file...
@@ -32,7 +29,6 @@ if errorlevel 1 (
     exit /b 0
 )
 
-REM Stop server
 echo [INFO] Stopping server - PID: !SERVER_PID!
 taskkill /PID !SERVER_PID! /F >nul 2>&1
 
