@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import smtplib
 from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
 from email.mime.text import MIMEText
+from email import encoders
 from typing import Any
 
 from flask import current_app
@@ -40,7 +42,12 @@ def get_email_config() -> tuple[EmailConfig | None, str]:
     return config, password
 
 
-def send_email(to_email: str, subject: str, body: str) -> tuple[bool, str]:
+def send_email(
+    to_email: str,
+    subject: str,
+    body: str,
+    attachments: list[tuple[str, bytes, str]] | None = None,
+) -> tuple[bool, str]:
     config, password = get_email_config()
     if config is None or not config.service_email or not password:
         return False, "邮箱配置不完整，请在系统设置中配置服务邮箱"
@@ -52,6 +59,13 @@ def send_email(to_email: str, subject: str, body: str) -> tuple[bool, str]:
         message["To"] = to_email
         message["Subject"] = subject
         message.attach(MIMEText(body, "plain", "utf-8"))
+        for filename, content, mime_type in attachments or []:
+            maintype, subtype = mime_type.split("/", 1)
+            part = MIMEBase(maintype, subtype)
+            part.set_payload(content)
+            encoders.encode_base64(part)
+            part.add_header("Content-Disposition", "attachment", filename=filename)
+            message.attach(part)
 
         if profile["ssl"]:
             server = smtplib.SMTP_SSL(profile["server"], profile["port"], timeout=15)

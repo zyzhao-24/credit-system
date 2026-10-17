@@ -3,23 +3,10 @@
 from backend.utils.passwords import client_password_digest
 
 
-def get_token(client, username, password, user_type):
-    response = client.post(
-        "/api/auth/token",
-        data={
-            "username": username,
-            "password": client_password_digest(password),
-            "user_type": user_type,
-        },
-    )
-    assert response.status_code == 200
-    return f"Bearer {response.get_json()['access_token']}"
-
-
-def test_batch_import_does_not_reset_existing_password(app, database, seed_legacy_payload, minimal_payload):
+def test_batch_import_does_not_reset_existing_password(app, database, seed_legacy_payload, minimal_payload, login):
     seed_legacy_payload(minimal_payload)
     client = app.test_client()
-    token = get_token(client, "system", "adminpass", "admin")
+    token = login("system", "adminpass", "admin")
 
     response = client.post(
         "/api/admin/students/batch",
@@ -41,11 +28,11 @@ def test_batch_import_does_not_reset_existing_password(app, database, seed_legac
     assert old_login.status_code == 200
 
 
-def test_activity_permission_holes_are_closed(app, database, seed_legacy_payload, minimal_payload):
+def test_activity_permission_holes_are_closed(app, database, seed_legacy_payload, minimal_payload, login):
     seed_legacy_payload(minimal_payload)
     client = app.test_client()
-    system_token = get_token(client, "system", "adminpass", "admin")
-    normal_token = get_token(client, "admin", "adminpass", "admin")
+    system_token = login("system", "adminpass", "admin")
+    normal_token = login("admin", "adminpass", "admin")
 
     created = client.post(
         "/api/admin/activities",
@@ -97,10 +84,10 @@ def test_activity_permission_holes_are_closed(app, database, seed_legacy_payload
     assert allowed.status_code == 200
 
 
-def test_record_detail_and_batch_entry_flow(app, database, seed_legacy_payload, minimal_payload):
+def test_record_detail_and_batch_entry_flow(app, database, seed_legacy_payload, minimal_payload, login):
     seed_legacy_payload(minimal_payload)
     client = app.test_client()
-    token = get_token(client, "admin", "adminpass", "admin")
+    token = login("admin", "adminpass", "admin")
     activities = client.get("/api/admin/activities", headers={"Authorization": token}).get_json()["activities"]
     activity_id = activities[0]["activity_id"]
     records = client.get(

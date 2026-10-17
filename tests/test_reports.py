@@ -4,22 +4,12 @@ import io
 
 import openpyxl
 
-from backend.utils.passwords import client_password_digest
 
-
-def token(client, username, password, user_type):
-    response = client.post(
-        "/api/auth/token",
-        data={"username": username, "password": client_password_digest(password), "user_type": user_type},
-    )
-    return f"Bearer {response.get_json()['access_token']}"
-
-
-def test_query_report_and_excel_export(app, database, seed_legacy_payload, minimal_payload):
+def test_query_report_and_excel_export(app, database, seed_legacy_payload, minimal_payload, login):
     seed_legacy_payload(minimal_payload)
     client = app.test_client()
-    system = token(client, "system", "adminpass", "admin")
-    normal = token(client, "admin", "adminpass", "admin")
+    system = login("system", "adminpass", "admin")
+    normal = login("admin", "adminpass", "admin")
 
     queried = client.post("/api/query/student", json={"query": "测试学生一"}, headers={"Authorization": system})
     assert queried.status_code == 200

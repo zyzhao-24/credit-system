@@ -1,10 +1,11 @@
 import { createContext, useContext } from "react";
-import type { AuthUser } from "@/api/types";
+import type { AuthUser, TokenResponse } from "@/api/types";
 
 export interface AuthContextValue {
   token: string | null;
   user: AuthUser | null;
-  login: (username: string, password: string, userType: "student" | "admin") => Promise<void>;
+  /** 两步登录完成后写入令牌与用户信息（页面负责密码/OTP两个步骤）。 */
+  finishLogin: (result: TokenResponse, username: string) => void;
   logout: () => Promise<void>;
 }
 

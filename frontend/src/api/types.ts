@@ -10,6 +10,20 @@ export interface TokenResponse {
   name: string;
 }
 
+/** 登录第一步（密码）的响应：密码正确后进入 OTP 步骤而非直接发令牌。 */
+export interface OtpRequiredResponse {
+  success: boolean;
+  otp_required: true;
+  otp_ticket: string;
+  message: string;
+}
+
+export type LoginStepOneResponse = TokenResponse | OtpRequiredResponse;
+
+export function isOtpRequired(response: LoginStepOneResponse): response is OtpRequiredResponse {
+  return (response as OtpRequiredResponse).otp_required === true;
+}
+
 export interface AuthUser {
   sub: string;
   user_type: "student" | "admin";
@@ -142,6 +156,15 @@ export interface AdminAccount {
   admin_id: string;
   role: string;
   department: string;
+  /** 是否已绑定 OTP（system 账号的 OTP 只能通过 manage.py 维护） */
+  has_otp: boolean;
+}
+
+/** 创建/重置管理员 OTP 后一次性返回的绑定信息（仅本次响应可见）。 */
+export interface AdminOtpBundle {
+  otp_secret: string;
+  otp_uri: string;
+  otp_qr: string;
 }
 
 export interface AdminActivity {

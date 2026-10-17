@@ -13,13 +13,14 @@ import {
   getDepartments,
   getEmailConfig,
   getTotalCredits,
+  resetAdminOtp,
   saveEmailConfig,
   saveTotalCredits,
   sendTestEmail,
   updateAdmin,
 } from "@/api/service";
 import { useAuth } from "@/auth/auth-context";
-import type { AdminAccount, AdminCategory, EmailConfig } from "@/api/types";
+import type { AdminAccount, AdminCategory, AdminOtpBundle, EmailConfig } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -502,6 +503,8 @@ function DepartmentsBlock() {
 
 // ========== 管理员账号管理 ==========
 
+const SYSTEM_ADMIN_ID = "system";
+
 function AdminsBlock({ currentAdminId }: { currentAdminId: string }) {
   const [admins, setAdmins] = useState<AdminAccount[]>([]);
   const [departments, setDepartments] = useState<string[]>([]);
@@ -509,6 +512,8 @@ function AdminsBlock({ currentAdminId }: { currentAdminId: string }) {
   const [passwordTarget, setPasswordTarget] = useState<AdminAccount | null>(null);
   const [departmentTarget, setDepartmentTarget] = useState<AdminAccount | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AdminAccount | null>(null);
+  const [resetOtpTarget, setResetOtpTarget] = useState<AdminAccount | null>(null);
+  const [otpBundle, setOtpBundle] = useState<AdminOtpBundle | null>(null);
 
   const load = useCallback(() => {
     getAdmins()
@@ -525,6 +530,11 @@ function AdminsBlock({ currentAdminId }: { currentAdminId: string }) {
 
   useEffect(load, [load]);
 
+  const toBundle = (result: Partial<AdminOtpBundle>): AdminOtpBundle | null =>
+    result.otp_secret && result.otp_uri && result.otp_qr
+      ? { otp_secret: result.otp_secret, otp_uri: result.otp_uri, otp_qr: result.otp_qr }
+      : null;
+
   return (
     <section>
       <h2 className="text-xl font-semibold mb-3">管理员账号管理</h2>
@@ -540,6 +550,7 @@ function AdminsBlock({ currentAdminId }: { currentAdminId: string }) {
               <TableHead>账号</TableHead>
               <TableHead>角色</TableHead>
               <TableHead>部门</TableHead>
+              <TableHead>动态验证码</TableHead>
               <TableHead>操作</TableHead>
             </TableRow>
           </TableHeader>
@@ -547,27 +558,44 @@ function AdminsBlock({ currentAdminId }: { currentAdminId: string }) {
             {admins.map((admin) => {
               const isSelf = admin.admin_id === currentAdminId;
               const isSystem = admin.role === "system_admin";
+              const isBuiltin = admin.admin_id === SYSTEM_ADMIN_ID;
               return (
                 <TableRow key={admin.admin_id}>
                   <TableCell>{admin.admin_id}</TableCell>
                   <TableCell>{isSystem ? "系统管理员" : "管理员"}</TableCell>
                   <TableCell>{admin.department || "-"}</TableCell>
                   <TableCell>
-                    <div className="flex flex-wrap gap-2">
-                      <Button size="sm" variant="secondary" onClick={() => setPasswordTarget(admin)}>
-                        修改密码
-                      </Button>
-                      {!isSelf ? (
-                        <Button size="sm" variant="secondary" onClick={() => setDepartmentTarget(admin)}>
-                          修改部门
+                    {admin.has_otp ? (
+                      <span className="text-success">已绑定</span>
+                    ) : (
+                      <span className="text-danger">未绑定</span>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {isBuiltin ? (
+                      <span className="text-[13px] text-[#888]">
+                        内置账号，密码与 OTP 请用 manage.py 维护
+                      </span>
+                    ) : (
+                      <div className="flex flex-wrap gap-2">
+                        <Button size="sm" variant="secondary" onClick={() => setPasswordTarget(admin)}>
+                          修改密码
                         </Button>
-                      ) : null}
-                      {!isSystem ? (
-                        <Button size="sm" variant="danger" onClick={() => setDeleteTarget(admin)}>
-                          删除
+                        {!isSelf ? (
+                          <Button size="sm" variant="secondary" onClick={() => setDepartmentTarget(admin)}>
+                            修改部门
+                          </Button>
+                        ) : null}
+                        <Button size="sm" variant="secondary" onClick={() => setResetOtpTarget(admin)}>
+                          重置 OTP
                         </Button>
-                      ) : null}
-                    </div>
+                        {!isSystem ? (
+                          <Button size="sm" variant="danger" onClick={() => setDeleteTarget(admin)}>
+                            删除
+                          </Button>
+                        ) : null}
+                      </div>
+                    )}
                   </TableCell>
                 </TableRow>
               );
@@ -580,7 +608,10 @@ function AdminsBlock({ currentAdminId }: { currentAdminId: string }) {
         open={addOpen}
         onOpenChange={setAddOpen}
         departments={departments}
-        onDone={load}
+        onCreated={(bundle) => {
+          load();
+          if (bundle) setOtpBundle(bundle);
+        }}
       />
       <AdminPasswordDialog
         target={passwordTarget}
@@ -590,6 +621,26 @@ function AdminsBlock({ currentAdminId }: { currentAdminId: string }) {
         target={departmentTarget}
         onOpenChange={(open) => !open && setDepartmentTarget(null)}
         departments={departments}
+      />
+      <ConfirmDialog
+        open={resetOtpTarget !== null}
+        onOpenChange={(open) => !open && setResetOtpTarget(null)}
+        message={`确定重置管理员"${resetOtpTarget?.admin_id ?? ""}"的动态验证码？旧验证器将立即失效。`}
+        onConfirm={async () => {
+          if (!resetOtpTarget) return;
+          try {
+            const result = await resetAdminOtp(resetOtpTarget.admin_id);
+            if (result.success) {
+              const bundle = toBundle(result);
+              if (bundle) setOtpBundle(bundle);
+              load();
+            } else {
+              toast.error(result.message || "重置失败");
+            }
+          } catch (error) {
+            toast.error(errorMessage(error, "重置失败"));
+          }
+        }}
       />
       <ConfirmDialog
         open={deleteTarget !== null}
@@ -606,7 +657,44 @@ function AdminsBlock({ currentAdminId }: { currentAdminId: string }) {
           }
         }}
       />
+      <OtpBundleDialog bundle={otpBundle} onOpenChange={(open) => !open && setOtpBundle(null)} />
     </section>
+  );
+}
+
+/** 创建/重置 OTP 后一次性展示二维码与密钥，关闭后无法再次查看。 */
+function OtpBundleDialog({
+  bundle,
+  onOpenChange,
+}: {
+  bundle: AdminOtpBundle | null;
+  onOpenChange: (open: boolean) => void;
+}) {
+  return (
+    <Dialog open={bundle !== null} onOpenChange={onOpenChange}>
+      <DialogContent title="绑定动态验证码（OTP）" className="max-w-[420px]">
+        {bundle ? (
+          <>
+            <p className="text-[13px] text-danger -mt-2 mb-3 leading-relaxed">
+              ⚠️ 此二维码与密钥仅显示这一次，请立即用验证器应用扫码绑定，或抄写密钥妥善保存。
+            </p>
+            <div className="flex justify-center mb-4">
+              <img
+                src={bundle.otp_qr}
+                alt="OTP 绑定二维码"
+                className="h-[220px] w-[220px] rounded-md border border-[#e0e0e0]"
+              />
+            </div>
+            <Field label="手动输入密钥">
+              <Input value={bundle.otp_secret} readOnly className="font-mono bg-[#f5f5f5]" />
+            </Field>
+            <Button className="w-full mt-2" onClick={() => onOpenChange(false)}>
+              我已完成绑定
+            </Button>
+          </>
+        ) : null}
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -614,12 +702,12 @@ function AddAdminDialog({
   open,
   onOpenChange,
   departments,
-  onDone,
+  onCreated,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   departments: string[];
-  onDone: () => void;
+  onCreated: (bundle: AdminOtpBundle | null) => void;
 }) {
   const [adminId, setAdminId] = useState("");
   const [password, setPassword] = useState("admin123");
@@ -638,11 +726,16 @@ function AddAdminDialog({
         department,
       });
       if (result.success) {
+        const bundle =
+          result.otp_secret && result.otp_uri && result.otp_qr
+            ? { otp_secret: result.otp_secret, otp_uri: result.otp_uri, otp_qr: result.otp_qr }
+            : null;
         onOpenChange(false);
         setAdminId("");
         setPassword("admin123");
         setDepartment("");
-        onDone();
+        // 创建即绑定 OTP：随后弹出一次性二维码对话框
+        onCreated(bundle);
       } else {
         toast.error(result.message || "添加失败");
       }

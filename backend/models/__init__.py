@@ -13,6 +13,7 @@ from backend.models.core import (  # noqa: F401
     Category,
     Department,
     EmailConfig,
+    EmailVerification,
     Setting,
     Student,
 )

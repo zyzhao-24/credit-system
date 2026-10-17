@@ -1,4 +1,9 @@
-"""Authentication and public student registration API."""
+"""Authentication and public student registration API.
+
+Login is a mandatory two-step flow: password first, TOTP code second.
+Step 1 returns a short-lived otp_ticket (10 minutes) which step 2 exchanges
+for the real access token.
+"""
 
 from __future__ import annotations
 
@@ -6,21 +11,30 @@ import re
 import secrets
 import threading
 import time
+from datetime import datetime, timedelta
 from typing import Any
 
 from flask import Blueprint, current_app, g, jsonify, request
 
 from backend.auth.decorators import require_auth, require_admin
-from backend.auth.jwt import issue_token
+from backend.auth.jwt import decode_token, issue_token
 from backend.extensions import db
-from backend.models import Admin, EmailConfig, RegistrationQuestionnaire, Student
+from backend.models import Admin, EmailConfig, EmailVerification, RegistrationQuestionnaire, Student
 from backend.services.emailer import send_email
+from backend.services.otp_service import (
+    bind_new_totp,
+    check_totp,
+    has_totp,
+    send_totp_binding_email,
+    student_email_address,
+)
 from backend.services.students import (
     PHONE_PATTERN,
     create_student,
     ensure_all_registration_questionnaires,
     ensure_registration_questionnaire,
 )
+from backend.utils.crypto import encrypt_secret
 from backend.utils.passwords import (
     client_password_digest,
     hash_password_digest,
@@ -35,6 +49,14 @@ _RESET_MAX_ATTEMPTS = 3
 _reset_attempts: dict[str, list[float]] = {}
 _reset_lock = threading.Lock()
 
+OTP_TICKET_SECONDS = 600
+_VERIFY_CODE_TTL_MINUTES = 10
+_VERIFY_CODE_MAX_ATTEMPTS = 5
+_VERIFY_CODE_WINDOW_SECONDS = 600
+_VERIFY_CODE_MAX_SENDS = 3
+_code_sends: dict[str, list[float]] = {}
+_code_lock = threading.Lock()
+
 
 def _json_error(message: str, status: int = 200, **extra):
     return jsonify({"success": False, "message": message, **extra}), status
@@ -48,37 +70,56 @@ def _resolve_user_type(username: str, requested: str) -> str | None:
     return None
 
 
-def _issue_for_user(user_type: str, username: str, password_digest: str):
+def _load_account(user_type: str, username: str) -> Student | Admin | None:
+    if user_type == "student":
+        return db.session.get(Student, username)
+    return db.session.get(Admin, username)
+
+
+def _check_password(user_type: str, username: str, password_digest: str) -> Student | Admin | None:
     if not PASSWORD_DIGEST_PATTERN.fullmatch(password_digest):
         return None
+    account = _load_account(user_type, username)
+    if account is None or not verify_password_digest(account.password_hash, password_digest):
+        return None
+    return account
 
+
+def _identity_for(account: Student | Admin, user_type: str) -> dict[str, Any]:
     if user_type == "student":
-        student = db.session.get(Student, username)
-        if student is None or not verify_password_digest(student.password_hash, password_digest):
-            return None
-        ensure_registration_questionnaire(student)
+        assert isinstance(account, Student)
+        ensure_registration_questionnaire(account)
         db.session.commit()
         return {
-            "id": student.student_id,
+            "id": account.student_id,
             "user_type": "student",
-            "name": student.name,
+            "name": account.name,
             "role": "",
             "department": "",
         }
-
-    admin = db.session.get(Admin, username)
-    if admin is None or not verify_password_digest(admin.password_hash, password_digest):
-        return None
-    if admin.role == "system_admin":
+    assert isinstance(account, Admin)
+    if account.role == "system_admin":
         ensure_all_registration_questionnaires()
         db.session.commit()
     return {
-        "id": admin.admin_id,
+        "id": account.admin_id,
         "user_type": "admin",
-        "name": admin.admin_id,
-        "role": admin.role,
-        "department": admin.department,
+        "name": account.admin_id,
+        "role": account.role,
+        "department": account.department,
     }
+
+
+def _issue_otp_ticket(account: Student | Admin, user_type: str) -> str:
+    account_id = account.student_id if isinstance(account, Student) else account.admin_id
+    ticket_identity = {
+        "id": account_id,
+        "user_type": user_type,
+        "name": "",
+        "role": "otp_pending",
+        "department": "",
+    }
+    return issue_token(ticket_identity, current_app.config["SECRET_KEY"], OTP_TICKET_SECONDS)
 
 
 def _token_payload(identity: dict[str, Any]) -> dict[str, Any]:
@@ -95,12 +136,47 @@ def _token_payload(identity: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _otp_required_response(account: Student | Admin, user_type: str):
+    """Start the OTP step: bind-and-email students who have no secret yet."""
+    if not has_totp(account):
+        if isinstance(account, Student):
+            secret, _uri = bind_new_totp(account)
+            db.session.commit()
+            success, message = send_totp_binding_email(account, secret)
+            if not success:
+                return _json_error(f"OTP绑定邮件发送失败：{message}")
+            ticket = _issue_otp_ticket(account, user_type)
+            return jsonify(
+                {
+                    "success": True,
+                    "otp_required": True,
+                    "otp_ticket": ticket,
+                    "message": message,
+                }
+            )
+        # Admin without OTP: only the CLI (manage.py) may bind one.
+        return _json_error(
+            "该管理员账号尚未绑定动态验证码，请使用服务器上的 manage.py 初始化 OTP",
+            403,
+        )
+    ticket = _issue_otp_ticket(account, user_type)
+    return jsonify(
+        {
+            "success": True,
+            "otp_required": True,
+            "otp_ticket": ticket,
+            "message": "请输入验证器中的6位动态验证码",
+        }
+    )
+
+
 @auth_bp.post("/api/auth/token")
 def oauth2_token():
-    """OAuth2 Password-compatible token endpoint.
+    """OAuth2 Password-compatible token endpoint (step 1: password).
 
     The password field carries the client-side SHA-256 digest for compatibility
-    with the legacy UI. It is verified again using the salted PBKDF2 hash.
+    with the legacy UI. A correct password yields an otp_ticket, not an access
+    token; the OTP code is exchanged at /api/auth/token/verify.
     """
     form = request.form
     grant_type = form.get("grant_type", "password")
@@ -116,23 +192,52 @@ def oauth2_token():
         return jsonify({"detail": "无效的用户类型"}), 400
 
     try:
-        identity = _issue_for_user(user_type, username, password_digest)
+        account = _check_password(user_type, username, password_digest)
     except Exception:
         db.session.rollback()
         raise
-    if identity is None:
+    if account is None:
         return jsonify({"detail": "账号或密码错误"}), 401
-    return jsonify(_token_payload(identity))
+    return _otp_required_response(account, user_type)
+
+
+@auth_bp.post("/api/auth/token/verify")
+def oauth2_token_verify():
+    """Step 2: exchange otp_ticket + TOTP code for the real access token."""
+    data = request.get_json(silent=True) or {}
+    ticket = data.get("otp_ticket", "").strip()
+    code = data.get("otp_code", "").strip()
+    if not ticket or not code:
+        return _json_error("请输入动态验证码")
+
+    try:
+        claims = decode_token(ticket, current_app.config["SECRET_KEY"])
+    except Exception:
+        return _json_error("验证已过期，请重新登录", 401)
+    if claims.get("role") != "otp_pending":
+        return _json_error("无效的验证票据", 401)
+
+    user_type = claims.get("user_type", "")
+    account = _load_account(user_type, claims.get("sub", ""))
+    if account is None or not check_totp(account, code):
+        return _json_error("验证码错误，请重新输入")
+
+    try:
+        identity = _identity_for(account, user_type)
+    except Exception:
+        db.session.rollback()
+        raise
+    return jsonify({"success": True, **_token_payload(identity)})
 
 
 def _legacy_login(user_type: str):
     data = request.get_json(silent=True) or {}
     username = data.get("username", "").strip()
     password_digest = data.get("password_hash", "").strip().lower()
-    identity = _issue_for_user(user_type, username, password_digest)
-    if identity is None:
+    account = _check_password(user_type, username, password_digest)
+    if account is None:
         return _json_error("学号或密码错误" if user_type == "student" else "账号或密码错误")
-    return jsonify({"success": True, **_token_payload(identity)})
+    return _otp_required_response(account, user_type)
 
 
 @auth_bp.post("/api/login/student")
@@ -172,6 +277,93 @@ def admin_session_info():
     )
 
 
+# ========== 注册邮箱验证码 ==========
+
+
+def _code_send_limited(key: str) -> bool:
+    now = time.time()
+    with _code_lock:
+        sends = [item for item in _code_sends.get(key, []) if now - item < _VERIFY_CODE_WINDOW_SECONDS]
+        if len(sends) >= _VERIFY_CODE_MAX_SENDS:
+            _code_sends[key] = sends
+            return True
+        sends.append(now)
+        _code_sends[key] = sends
+    return False
+
+
+def _verification_email_body(name: str, code: str) -> str:
+    return f"""
+您好，{name} 同学：
+
+您正在注册团校积分系统，邮箱验证码为：
+
+    {code}
+
+验证码 {_VERIFY_CODE_TTL_MINUTES} 分钟内有效，请勿泄露给他人。
+
+如非本人操作，请忽略本邮件。
+
+---
+团校积分系统
+"""
+
+
+@auth_bp.post("/api/student/register/send_code")
+def send_registration_code():
+    data = request.get_json(silent=True) or {}
+    student_id = data.get("student_id", "").strip()
+    name = data.get("name", "").strip()
+
+    if not student_id or not name:
+        return _json_error("请先填写学号和姓名")
+    if not student_id.isdigit():
+        return _json_error("学号只能包含数字")
+    if db.session.get(Student, student_id):
+        return _json_error("该学号已注册，请直接登录")
+
+    rate_key = f"{student_id}:{request.remote_addr or 'unknown'}"
+    if _code_send_limited(rate_key):
+        return _json_error("验证码请求过于频繁，请稍后再试", 429)
+
+    address, error = student_email_address(student_id)
+    if address is None:
+        return _json_error(error)
+
+    code = f"{secrets.randbelow(1000000):06d}"
+    success, message = send_email(address, "团校积分系统 - 注册验证码", _verification_email_body(name, code))
+    if not success:
+        return _json_error(message)
+
+    verification = db.session.get(EmailVerification, student_id)
+    if verification is None:
+        verification = EmailVerification(student_id=student_id, created_at=datetime.now())
+        db.session.add(verification)
+    verification.code_hash = hash_password_digest(code)
+    verification.expires_at = datetime.now() + timedelta(minutes=_VERIFY_CODE_TTL_MINUTES)
+    verification.attempts = 0
+    verification.created_at = datetime.now()
+    db.session.commit()
+    return jsonify({"success": True, "message": f"验证码已发送至 {address}，{_VERIFY_CODE_TTL_MINUTES}分钟内有效"})
+
+
+def _check_registration_code(student_id: str, code: str) -> str | None:
+    """Return an error message, or None when the code is valid."""
+    verification = db.session.get(EmailVerification, student_id)
+    if verification is None:
+        return "请先获取邮箱验证码"
+    if datetime.now() > verification.expires_at:
+        return "验证码已过期，请重新获取"
+    if verification.attempts >= _VERIFY_CODE_MAX_ATTEMPTS:
+        return "验证码尝试次数过多，请重新获取"
+    if not verify_password_digest(verification.code_hash, code.strip()):
+        verification.attempts += 1
+        db.session.commit()
+        return "验证码错误"
+    db.session.delete(verification)
+    return None
+
+
 @auth_bp.post("/api/student/register")
 def student_register():
     data = request.get_json(silent=True) or {}
@@ -182,6 +374,7 @@ def student_register():
     password = data.get("password", "")
     password_digest = data.get("password_hash", "").strip().lower()
     suggestion = data.get("suggestion", "").strip()
+    email_code = data.get("email_code", "").strip()
 
     if not all([name, student_id, phone, wechat, password or password_digest]):
         return _json_error("请填写所有必填项")
@@ -195,6 +388,12 @@ def student_register():
         return _json_error("密码至少需要6位字符")
     if password_digest and not PASSWORD_DIGEST_PATTERN.fullmatch(password_digest):
         return _json_error("密码格式不正确")
+    if not email_code:
+        return _json_error("请输入邮箱验证码")
+
+    code_error = _check_registration_code(student_id, email_code)
+    if code_error:
+        return _json_error(code_error)
 
     try:
         student = create_student(
@@ -207,11 +406,26 @@ def student_register():
         questionnaire.phone = phone
         questionnaire.wechat = wechat
         questionnaire.suggestion = suggestion
+        secret, _uri = bind_new_totp(student)
         db.session.commit()
     except Exception:
         db.session.rollback()
         raise
-    return jsonify({"success": True, "message": "注册成功！请使用学号和密码登录"})
+
+    success, message = send_totp_binding_email(student, secret)
+    if not success:
+        return jsonify(
+            {
+                "success": True,
+                "message": f"注册成功！但OTP绑定邮件发送失败（{message}），请联系管理员协助绑定",
+            }
+        )
+    return jsonify(
+        {
+            "success": True,
+            "message": "注册成功！动态验证码绑定二维码已发送至您的学号邮箱，请扫码绑定后登录",
+        }
+    )
 
 
 def _reset_rate_limited(key: str) -> bool:
@@ -257,26 +471,38 @@ def forgot_password():
 
     new_password = secrets.token_urlsafe(8)[:8]
     student_email = f"{student_id}{config.student_email_suffix}"
+    # 重置密码的同时重新生成 OTP，并连同二维码一起发送（找回设备通道）
+    secret, _uri = bind_new_totp(student)
+    from backend.utils.otp import provisioning_uri, qr_png_bytes
+
+    qr_png = qr_png_bytes(provisioning_uri(secret, student_id))
     body = f"""
 您好，{student.name} 同学：
 
-您的团校积分系统密码已重置。
+您的团校积分系统密码已重置，动态验证码（OTP）也已重新生成。
 
 学号：{student_id}
 新密码：{new_password}
+OTP密钥：{secret}
 
-请使用新密码登录系统，并及时修改密码。
+请使用新密码登录系统；登录时需输入验证器中的6位动态验证码，
+可扫描附件二维码或手动输入上方密钥完成绑定。
 
 如非本人操作，请立即联系管理员。
 
 ---
 团校积分系统
     """
-    success, message = send_email(student_email, "团校积分系统 - 密码重置", body)
+    success, message = send_email(
+        student_email,
+        "团校积分系统 - 密码与动态验证码重置",
+        body,
+        attachments=[("otp-qrcode.png", qr_png, "image/png")],
+    )
     if not success:
         return _json_error(message)
 
     student.password_hash = hash_password_digest(client_password_digest(new_password))
     student.password_reset_required = True
     db.session.commit()
-    return jsonify({"success": True, "message": f"新密码已发送至 {student_email}，请查收邮件"})
+    return jsonify({"success": True, "message": f"新密码与OTP二维码已发送至 {student_email}，请查收邮件"})

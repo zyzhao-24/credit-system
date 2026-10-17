@@ -9,7 +9,9 @@ from backend.auth.decorators import require_admin, require_system_admin
 from backend.extensions import db
 from backend.models import Activity, ActivityAllowedEditor, Admin, Category, Department, EmailConfig, Setting
 from backend.services.emailer import send_test_email
+from backend.services.otp_service import bind_new_totp, has_totp
 from backend.utils.crypto import decrypt_secret, encrypt_secret
+from backend.utils.otp import qr_png_data_uri
 from backend.utils.passwords import client_password_digest, hash_password_digest
 
 
@@ -183,12 +185,20 @@ def manage_departments():
     return jsonify({"success": True})
 
 
+SYSTEM_ADMIN_ID = "system"
+
+
 @admin_settings_bp.route("/api/admin/admins", methods=["GET", "POST", "PUT", "DELETE"])
 @require_system_admin
 def manage_admins():
     if request.method == "GET":
         admins = [
-            {"admin_id": admin.admin_id, "role": admin.role, "department": admin.department}
+            {
+                "admin_id": admin.admin_id,
+                "role": admin.role,
+                "department": admin.department,
+                "has_otp": has_totp(admin),
+            }
             for admin in Admin.query.order_by(Admin.admin_id.asc()).all()
         ]
         return jsonify({"success": True, "admins": admins})
@@ -203,26 +213,38 @@ def manage_admins():
         department = data.get("department", "")
         if not admin_id:
             return _error("账号不能为空")
+        if admin_id == SYSTEM_ADMIN_ID:
+            return _error("system 为内置系统管理员账号，不能通过接口创建")
         if role not in {"admin", "system_admin"}:
             return _error("角色不正确")
         if db.session.get(Admin, admin_id):
             return _error("账号已存在")
-        db.session.add(
-            Admin(
-                admin_id=admin_id,
-                password_hash=hash_password_digest(client_password_digest(password)),
-                role=role,
-                department=department,
-            )
+        admin = Admin(
+            admin_id=admin_id,
+            password_hash=hash_password_digest(client_password_digest(password)),
+            role=role,
+            department=department,
         )
+        db.session.add(admin)
+        # 创建时必须绑定 OTP：密钥随响应一次性返回
+        secret, uri = bind_new_totp(admin)
         db.session.commit()
-        return jsonify({"success": True})
+        return jsonify(
+            {
+                "success": True,
+                "otp_secret": secret,
+                "otp_uri": uri,
+                "otp_qr": qr_png_data_uri(uri),
+            }
+        )
 
     if request.method == "PUT":
         admin_id = data.get("admin_id", "")
         admin = db.session.get(Admin, admin_id)
         if admin is None:
             return _error("管理员不存在")
+        if admin_id == SYSTEM_ADMIN_ID:
+            return _error("system 账号的密码与 OTP 只能通过 manage.py 命令修改")
         if admin_id == current_admin_id and "department" in data:
             return _error("不能修改自己的部门")
         if "password" in data:
@@ -240,6 +262,8 @@ def manage_admins():
     admin = db.session.get(Admin, admin_id)
     if admin is None:
         return _error("管理员不存在")
+    if admin_id == SYSTEM_ADMIN_ID:
+        return _error("system 为内置系统管理员账号，不允许删除")
     if admin_id == current_admin_id:
         return _error("不能删除自己的账号")
     if admin.role == "system_admin":
@@ -249,3 +273,26 @@ def manage_admins():
     db.session.delete(admin)
     db.session.commit()
     return jsonify({"success": True})
+
+
+@admin_settings_bp.post("/api/admin/admins/reset_otp")
+@require_system_admin
+def reset_admin_otp():
+    """重新生成普通管理员的 OTP（system 账号只能走 manage.py）。"""
+    data = request.get_json(silent=True) or {}
+    admin_id = data.get("admin_id", "").strip()
+    if admin_id == SYSTEM_ADMIN_ID:
+        return _error("system 账号的 OTP 只能通过 manage.py 重置")
+    admin = db.session.get(Admin, admin_id)
+    if admin is None:
+        return _error("管理员不存在")
+    secret, uri = bind_new_totp(admin)
+    db.session.commit()
+    return jsonify(
+        {
+            "success": True,
+            "otp_secret": secret,
+            "otp_uri": uri,
+            "otp_qr": qr_png_data_uri(uri),
+        }
+    )

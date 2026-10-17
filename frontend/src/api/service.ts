@@ -3,6 +3,7 @@ import type {
   AdminAccount,
   AdminActivity,
   AdminCategory,
+  AdminOtpBundle,
   AdminQuestionnaire,
   AdminRecord,
   AdminRecordDetail,
@@ -17,6 +18,7 @@ import type {
   CustomAnswers,
   CustomQuestion,
   EmailConfig,
+  LoginStepOneResponse,
   MyRegistration,
   RegistrationQuestionnaire,
   StudentActivities,
@@ -35,21 +37,42 @@ export async function loginWithToken(
   username: string,
   passwordDigest: string,
   userType: "student" | "admin",
-): Promise<TokenResponse> {
+): Promise<LoginStepOneResponse> {
   const body = new URLSearchParams({
     grant_type: "password",
     username,
     password: passwordDigest,
     user_type: userType,
   });
-  const { data } = await api.post<TokenResponse>("/api/auth/token", body, {
+  const { data } = await api.post<LoginStepOneResponse>("/api/auth/token", body, {
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
+  });
+  return data;
+}
+
+/** 登录第二步：用 otp_ticket + 6位动态验证码换取正式访问令牌。 */
+export async function verifyOtpCode(otpTicket: string, otpCode: string): Promise<TokenResponse> {
+  const { data } = await api.post<TokenResponse>("/api/auth/token/verify", {
+    otp_ticket: otpTicket,
+    otp_code: otpCode,
   });
   return data;
 }
 
 export async function logoutRemote(): Promise<void> {
   await api.post("/api/auth/logout");
+}
+
+/** 注册第一步：向学号邮箱发送6位验证码。 */
+export async function sendRegistrationCode(
+  studentId: string,
+  name: string,
+): Promise<BasicResponse> {
+  const { data } = await api.post<BasicResponse>("/api/student/register/send_code", {
+    student_id: studentId,
+    name,
+  });
+  return data;
 }
 
 export async function registerStudent(payload: {
@@ -59,6 +82,7 @@ export async function registerStudent(payload: {
   wechat: string;
   password: string;
   suggestion: string;
+  email_code: string;
 }): Promise<BasicResponse> {
   const { data } = await api.post<BasicResponse>("/api/student/register", payload);
   return data;
@@ -299,8 +323,22 @@ export async function createAdmin(payload: {
   password: string;
   role: string;
   department: string;
-}): Promise<BasicResponse> {
-  const { data } = await api.post<BasicResponse>("/api/admin/admins", payload);
+}): Promise<BasicResponse & Partial<AdminOtpBundle>> {
+  const { data } = await api.post<BasicResponse & Partial<AdminOtpBundle>>(
+    "/api/admin/admins",
+    payload,
+  );
+  return data;
+}
+
+/** 重置普通管理员的 OTP，返回新的二维码/密钥（仅本次响应可见）。 */
+export async function resetAdminOtp(
+  adminId: string,
+): Promise<BasicResponse & Partial<AdminOtpBundle>> {
+  const { data } = await api.post<BasicResponse & Partial<AdminOtpBundle>>(
+    "/api/admin/admins/reset_otp",
+    { admin_id: adminId },
+  );
   return data;
 }
 

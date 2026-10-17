@@ -1,8 +1,11 @@
 """Read-only dual-role JWT smoke test against a migrated database.
 
-Uses credentials from data.json to exercise the real login path, then checks
-representative endpoints for each role. It performs no mutations beyond the
-idempotent login-time questionnaire backfill. Run from the project root:
+Uses credentials from data.json to exercise the real two-step login path
+(password + TOTP), then checks representative endpoints for each role.
+OTP secrets are provisioned directly in the database (equivalent to
+`manage.py set-otp`), so no email is ever sent. It performs no mutations
+beyond OTP binding and the idempotent login-time questionnaire backfill.
+Run from the project root:
 
     .venv/Scripts/python scripts/smoke_api.py
     .venv/Scripts/python scripts/smoke_api.py --db path/to/other.db
@@ -49,8 +52,27 @@ def main() -> int:
         if not ok:
             failures.append(label)
 
+    # 预绑定 OTP（等价于 manage.py set-otp，直接写库、不发送邮件），
+    # 否则学生首次登录会自动绑定并触发真实的 SMTP 发送。
+    import pyotp
+
+    from backend.extensions import db
+    from backend.models import Admin, Student
+    from backend.services.otp_service import bind_new_totp, get_totp_secret, has_totp
+
+    accounts = [("admin", system_id), ("student", student_id)]
+    if normal_id:
+        accounts.append(("admin", normal_id))
+    with app.app_context():
+        for user_type, account_id in accounts:
+            model = Student if user_type == "student" else Admin
+            account = db.session.get(model, account_id)
+            if account is not None and not has_totp(account):
+                bind_new_totp(account)
+        db.session.commit()
+
     def login(username: str, password: str, user_type: str) -> str:
-        response = client.post(
+        step1 = client.post(
             "/api/auth/token",
             data={
                 "grant_type": "password",
@@ -59,9 +81,28 @@ def main() -> int:
                 "user_type": user_type,
             },
         )
-        payload = response.get_json(silent=True) or {}
-        check(f"token login {user_type}:{username}", response.status_code == 200 and "access_token" in payload, str(payload))
-        return f"Bearer {payload.get('access_token', '')}"
+        payload = step1.get_json(silent=True) or {}
+        if not (step1.status_code == 200 and payload.get("otp_required") and payload.get("otp_ticket")):
+            check(f"token login {user_type}:{username} (password step)", False, str(payload))
+            return ""
+        with app.app_context():
+            model = Student if user_type == "student" else Admin
+            account = db.session.get(model, username)
+            secret = get_totp_secret(account) if account is not None else ""
+        if not secret:
+            check(f"token login {user_type}:{username}", False, "账号不存在或未绑定 OTP")
+            return ""
+        step2 = client.post(
+            "/api/auth/token/verify",
+            json={"otp_ticket": payload["otp_ticket"], "otp_code": pyotp.TOTP(secret).now()},
+        )
+        final = step2.get_json(silent=True) or {}
+        check(
+            f"token login {user_type}:{username}",
+            step2.status_code == 200 and "access_token" in final,
+            str(final),
+        )
+        return f"Bearer {final.get('access_token', '')}"
 
     health = client.get("/api/health")
     check("health", health.status_code == 200 and health.get_json().get("status") == "ok")

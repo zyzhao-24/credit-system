@@ -10,6 +10,7 @@ class Student(db.Model):
     name = db.Column(db.String(100), nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
     password_reset_required = db.Column(db.Boolean, nullable=False, default=False)
+    totp_secret_encrypted = db.Column(db.Text, nullable=False, default="")
 
     __table_args__ = (
         db.CheckConstraint("length(student_id) > 0", name="ck_students_id_not_empty"),
@@ -23,6 +24,7 @@ class Admin(db.Model):
     password_hash = db.Column(db.String(255), nullable=False)
     role = db.Column(db.String(20), nullable=False, default="admin")
     department = db.Column(db.String(100), nullable=False, default="")
+    totp_secret_encrypted = db.Column(db.Text, nullable=False, default="")
 
     __table_args__ = (
         db.CheckConstraint("role IN ('admin', 'system_admin')", name="ck_admins_role"),
@@ -63,3 +65,15 @@ class EmailConfig(db.Model):
     __table_args__ = (
         db.CheckConstraint("id = 1", name="ck_email_config_singleton"),
     )
+
+
+class EmailVerification(db.Model):
+    """Registration email verification codes (hashed, time-limited)."""
+
+    __tablename__ = "email_verifications"
+
+    student_id = db.Column(db.String(32), primary_key=True)
+    code_hash = db.Column(db.String(255), nullable=False)
+    expires_at = db.Column(db.DateTime, nullable=False)
+    attempts = db.Column(db.Integer, nullable=False, default=0)
+    created_at = db.Column(db.DateTime, nullable=False)

@@ -28,6 +28,60 @@ def _configure_sqlite(dbapi_connection, _connection_record) -> None:
         cursor.close()
 
 
+def _ensure_schema(app: Flask) -> None:
+    """Idempotent SQLite schema upgrades for databases created before OTP.
+
+    The project manages schema via create_all rather than Alembic revision
+    files, so new columns on existing tables are added here with plain
+    ALTER TABLE guarded by PRAGMA table_info.
+    """
+    with app.app_context():
+        db.create_all()
+        if not db.engine.url.get_backend_name() == "sqlite":
+            return
+        additions = {
+            "students": ["totp_secret_encrypted TEXT NOT NULL DEFAULT ''"],
+            "admins": ["totp_secret_encrypted TEXT NOT NULL DEFAULT ''"],
+        }
+        with db.engine.begin() as connection:
+            for table, columns in additions.items():
+                existing = {
+                    row[1]
+                    for row in connection.exec_driver_sql(
+                        f"PRAGMA table_info({table})"
+                    ).fetchall()
+                }
+                for column_def in columns:
+                    name = column_def.split()[0]
+                    if name not in existing:
+                        connection.exec_driver_sql(
+                            f"ALTER TABLE {table} ADD COLUMN {column_def}"
+                        )
+
+
+def _ensure_system_admin(app: Flask) -> None:
+    """The built-in system admin account always exists (fixed id 'system')."""
+    from backend.models.core import Admin
+    from backend.utils.passwords import client_password_digest, hash_password_digest
+
+    with app.app_context():
+        admin = db.session.get(Admin, "system")
+        if admin is None:
+            db.session.add(
+                Admin(
+                    admin_id="system",
+                    password_hash=hash_password_digest(client_password_digest("sysadmin")),
+                    role="system_admin",
+                    department="",
+                )
+            )
+            db.session.commit()
+            app.logger.warning("已创建内置 system 管理员（初始密码 sysadmin，请用 manage.py 修改）")
+        elif admin.role != "system_admin":
+            admin.role = "system_admin"
+            db.session.commit()
+
+
 def create_app(config_object: type[Config] | None = None, **overrides) -> Flask:
     env_name = os.getenv("FLASK_ENV", "development")
     if config_object is None:
@@ -62,6 +116,9 @@ def create_app(config_object: type[Config] | None = None, **overrides) -> Flask:
     app.register_blueprint(admin_reports_bp)
     app.register_blueprint(questionnaires_bp)
     app.register_blueprint(student_bp)
+
+    _ensure_schema(app)
+    _ensure_system_admin(app)
 
     cors_origins = app.config.get("CORS_ORIGINS", [])
     if cors_origins:

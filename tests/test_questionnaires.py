@@ -2,24 +2,14 @@
 
 from datetime import datetime, timedelta
 
-from backend.utils.passwords import client_password_digest
 
 
-def token(client, username, password, user_type):
-    response = client.post(
-        "/api/auth/token",
-        data={"username": username, "password": client_password_digest(password), "user_type": user_type},
-    )
-    assert response.status_code == 200
-    return f"Bearer {response.get_json()['access_token']}"
-
-
-def test_questionnaire_waitlist_cancel_and_resubmit(app, database, seed_legacy_payload, minimal_payload):
+def test_questionnaire_waitlist_cancel_and_resubmit(app, database, seed_legacy_payload, minimal_payload, login):
     seed_legacy_payload(minimal_payload)
     client = app.test_client()
-    system = token(client, "system", "adminpass", "admin")
-    student1 = token(client, "1001", "pass123", "student")
-    student2 = token(client, "1002", "pass456", "student")
+    system = login("system", "adminpass", "admin")
+    student1 = login("1001", "pass123", "student")
+    student2 = login("1002", "pass456", "student")
 
     activities = client.get("/api/admin/activities", headers={"Authorization": system}).get_json()["activities"]
     start = (datetime.now() - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M")

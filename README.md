@@ -11,8 +11,12 @@ pip install -r requirements.txt
 # 2. 配置环境变量
 cp .env.example .env   # 编辑 SECRET_KEY（生产必须）
 
-# 3. 初始化管理员（默认账号：system，密码：sysadmin，可用 INIT_ADMIN_PASSWORD 覆盖）
+# 3. 初始化管理员（确保内置 system 账号存在，初始密码：sysadmin）
 python init_admin.py
+
+# 3b. 首次部署必须设置 system 的密码与 OTP（登录强制两步验证）
+python manage.py reset-system-password    # 不传参数则生成随机强密码并打印一次
+python manage.py reset-system-otp         # 打印密钥并保存二维码到 var/
 
 # 4. 构建前端
 cd frontend && npm install && npm run build && cd ..
@@ -47,6 +51,21 @@ cd frontend && npm run dev
   - `scripts/smoke_api.py` —— 双角色 API 冒烟测试
 - **测试**：`python -m pytest tests/ -v`
 
+## 两步验证（OTP）
+
+登录强制“密码 + TOTP 动态验证码”两步：
+
+- 第一步 `POST /api/auth/token`（密码）返回短期 `otp_ticket`（10 分钟）；
+- 第二步 `POST /api/auth/token/verify`（otp_ticket + 6 位验证码）换取正式 JWT。
+- **学生**：注册时需先通过学号邮箱验证码（`/api/student/register/send_code`），
+  注册成功后 OTP 绑定二维码以邮件附件发送到学号邮箱；存量学生首次密码登录时
+  自动绑定并发送二维码；忘记密码会同时重置密码与 OTP。
+- **管理员**：无邮箱，创建账号时接口一次性返回二维码与 Base32 密钥（仅本次可见）；
+  系统管理员可在后台“重置 OTP”普通管理员的绑定。
+- **system 账号**：内置固定存在，接口禁止创建/删除/修改；其密码与 OTP 只能通过
+  服务器本地命令维护（`manage.py reset-system-password` / `reset-system-otp`），
+  任意账号也可用 `manage.py set-otp <student|admin> <账号>` 离线重新绑定（不发邮件）。
+
 ## 核心功能
 
 ### 学生端
@@ -74,7 +93,7 @@ cd frontend && npm run dev
 
 ## 技术栈
 
-- **后端**：Flask 3.0 + Flask-SQLAlchemy + Waitress + PyJWT
+- **后端**：Flask 3.0 + Flask-SQLAlchemy + Waitress + PyJWT + PyOTP（TOTP 两步验证）
 - **前端**：React 19 + TypeScript + Vite + Tailwind CSS 4 + Radix + axios + react-router
 - **数据存储**：SQLite（WAL 模式，事务写入）
 - **密码安全**：浏览器 SHA-256 摘要 → 服务端 PBKDF2（600k 轮）
@@ -86,9 +105,12 @@ cd frontend && npm run dev
 2. **管理员登录路径固定**：`/admin/login`，不再使用每次启动随机生成的路径
    （在 SPA 形态下随机路径没有实际安全收益）。
 3. **批量导入不再静默重置密码**：已存在的学生只有显式提供第三列密码时才更新密码。
-4. **认证方式**：session cookie 改为 JWT bearer token（`POST /api/auth/token`，
-   OAuth2 Password 风格表单），12 小时过期。
+4. **认证方式**：session cookie 改为 JWT bearer token，且登录强制密码 + TOTP 两步验证
+   （见上文“两步验证（OTP）”）；OTP 密钥与 SMTP 密码一样用 `SECRET_KEY` 派生的
+   Fernet 密钥加密存储。
 5. **CORS 收紧**：生产同源部署默认不开放跨域；开发仅放行 Vite 来源（`CORS_ORIGINS`）。
+6. **学生注册需邮箱验证**：注册前须先获取学号邮箱验证码；注册成功后登录所需的
+   OTP 二维码通过邮件下发。
 
 ## 生产部署注意
 
