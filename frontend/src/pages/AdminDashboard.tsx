@@ -5,13 +5,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageHeader } from "@/components/PageHeader";
 import { ActivitiesSection } from "./admin/ActivitiesSection";
 import { ExportSection } from "./admin/ExportSection";
-import { QuerySection } from "./admin/QuerySection";
 import { ReportSection } from "./admin/ReportSection";
 import { SettingsSection } from "./admin/SettingsSection";
 
 /**
- * 管理员控制台。系统管理员显示全部五个标签；普通管理员显示
+ * 管理员控制台。系统管理员显示全部标签；普通管理员显示
  * 学生列表（只读）、活动管理和数据报表（仅总体统计），与 legacy 一致。
+ * 学分查询已并入数据报表：学生列表可搜索，点击行查看学分详情并导出 PDF。
  */
 export function AdminDashboard() {
   const { user } = useAuth();
@@ -26,7 +26,6 @@ export function AdminDashboard() {
           {isSystemAdmin ? <TabsTrigger value="settings">系统设置</TabsTrigger> : null}
           {!isSystemAdmin ? <TabsTrigger value="students">学生列表</TabsTrigger> : null}
           <TabsTrigger value="activities">活动管理</TabsTrigger>
-          {isSystemAdmin ? <TabsTrigger value="query">学分查询</TabsTrigger> : null}
           <TabsTrigger value="report">数据报表</TabsTrigger>
           {isSystemAdmin ? <TabsTrigger value="export">数据导出</TabsTrigger> : null}
           {isSystemAdmin ? (
@@ -56,12 +55,6 @@ export function AdminDashboard() {
         <TabsContent value="activities">
           <ActivitiesSection isSystemAdmin={isSystemAdmin} />
         </TabsContent>
-
-        {isSystemAdmin ? (
-          <TabsContent value="query">
-            <QuerySection />
-          </TabsContent>
-        ) : null}
 
         <TabsContent value="report">
           <ReportSection isSystemAdmin={isSystemAdmin} />
