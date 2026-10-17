@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router";
 import { toast } from "sonner";
 import { ChevronDown, ChevronRight, FileDown } from "lucide-react";
 import { downloadFile, errorMessage } from "@/api/client";
@@ -44,7 +43,6 @@ const PHONE_PATTERN = /^1[3-9]\d{9}$/;
 
 /** 问卷管理页（系统管理员）：活动问卷模板。学生报名信息在“学生管理”标签页。 */
 export function QuestionnaireAdminPage() {
-  const navigate = useNavigate();
   const [templates, setTemplates] = useState<AdminQuestionnaireTemplate[]>([]);
   const [activities, setActivities] = useState<AdminActivity[]>([]);
   const [actSearch, setActSearch] = useState("");
@@ -87,15 +85,7 @@ export function QuestionnaireAdminPage() {
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-6">
-      <PageHeader
-        title="问卷管理"
-        homePath="/admin"
-        extra={
-          <Button variant="secondary" size="sm" onClick={() => navigate("/admin")}>
-            返回管理后台
-          </Button>
-        }
-      />
+      <PageHeader title="问卷管理" homePath="/admin" backTo="/admin" />
 
       {/* 活动问卷模板 */}
       <section>

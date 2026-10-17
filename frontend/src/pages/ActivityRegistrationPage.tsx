@@ -103,15 +103,7 @@ export function ActivityRegistrationPage() {
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-6">
-      <PageHeader
-        title="活动报名"
-        homePath="/student"
-        extra={
-          <Button variant="secondary" size="sm" onClick={() => navigate("/student")}>
-            返回首页
-          </Button>
-        }
-      />
+      <PageHeader title="活动报名" homePath="/student" backTo="/student" />
 
       <Tabs defaultValue="available">
         <TabsList>

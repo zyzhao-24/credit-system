@@ -64,7 +64,7 @@ export function StudentProfilePage() {
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-6">
-      <PageHeader title="报名信息" homePath="/student" />
+      <PageHeader title="报名信息" homePath="/student" backTo="/student" />
 
       <Card>
         <CardTitle>基本信息</CardTitle>
