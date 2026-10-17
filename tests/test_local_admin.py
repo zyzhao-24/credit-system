@@ -44,7 +44,7 @@ def test_console_reset_password_and_otp(app, database):
     token = _form_token(client)
     reset = client.post("/local/system/reset-password", data={"form_token": token})
     assert reset.status_code == 200
-    match = re.search(r"<code style=\"font-size:18px\">([^<]+)</code>", reset.get_data(as_text=True))
+    match = re.search(r'<span class="secret">([^<]+)</span>', reset.get_data(as_text=True))
     assert match is not None
     new_password = match.group(1)
     database.session.refresh(admin)
@@ -57,6 +57,32 @@ def test_console_reset_password_and_otp(app, database):
     assert "data:image/png;base64," in html
     database.session.refresh(admin)
     assert has_totp(admin)
+
+
+def test_console_reset_password_accepts_custom_value(app, database):
+    client = app.test_client()
+    admin = database.session.get(Admin, "system")
+
+    # 自定义密码生效
+    token = _form_token(client)
+    custom = client.post(
+        "/local/system/reset-password",
+        data={"form_token": token, "new_password": "MyOwnPassw0rd!"},
+    )
+    assert custom.status_code == 200
+    assert "MyOwnPassw0rd!" in custom.get_data(as_text=True)
+    database.session.refresh(admin)
+    assert verify_password_digest(admin.password_hash, client_password_digest("MyOwnPassw0rd!"))
+
+    # 太短的自定义密码被拒绝
+    token = _form_token(client)
+    short = client.post(
+        "/local/system/reset-password",
+        data={"form_token": token, "new_password": "abc"},
+    )
+    assert short.status_code == 400
+    database.session.refresh(admin)
+    assert verify_password_digest(admin.password_hash, client_password_digest("MyOwnPassw0rd!"))
 
 
 def test_console_email_config_only_available_here(app, database):
