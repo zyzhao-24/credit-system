@@ -376,9 +376,15 @@ function AdminsBlock({ currentAdminId }: { currentAdminId: string }) {
                   </TableCell>
                   <TableCell>
                     {isBuiltin ? (
-                      <span className="text-[13px] text-[#888]">
-                        内置账号，密码与 OTP 请在服务器本机访问 /local/system 维护
-                      </span>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => {
+                          window.location.href = "/local/system";
+                        }}
+                      >
+                        前往本机维护页
+                      </Button>
                     ) : (
                       <div className="flex flex-wrap gap-2">
                         <Button size="sm" variant="secondary" onClick={() => setPasswordTarget(admin)}>
