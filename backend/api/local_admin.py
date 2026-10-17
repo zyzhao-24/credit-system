@@ -3,7 +3,7 @@
 只能通过服务器本机（127.0.0.1 / ::1）访问 http://localhost:5000/local/system，
 集中维护三类只允许出现在本机的敏感信息：
 - 内置 system 管理员的密码（可自定义，留空则随机生成）；
-- system 的 OTP（二维码与密钥，仅显示一次）；
+- system 的 OTP（两步：生成候选二维码 → 输入验证码确认后才生效）；
 - 邮件服务配置（SMTP 账号、明文密码、学生邮箱后缀，以及测试发送）。
 
 安全措施：
@@ -26,9 +26,13 @@ from flask import Blueprint, current_app, request
 from backend.extensions import db
 from backend.models import Admin, EmailConfig
 from backend.services import emailer
-from backend.services.otp_service import bind_new_totp
+from backend.services.otp_service import (
+    begin_pending_otp,
+    decode_pending_otp,
+    set_totp_secret,
+)
 from backend.utils.crypto import encrypt_secret
-from backend.utils.otp import provisioning_uri, qr_png_data_uri
+from backend.utils.otp import provisioning_uri, qr_png_data_uri, verify_totp
 from backend.utils.passwords import client_password_digest, hash_password_digest
 
 
@@ -39,74 +43,86 @@ FORM_TOKEN_TTL_SECONDS = 600
 MIN_PASSWORD_LENGTH = 8
 _LOCAL_ADDRS = {"127.0.0.1", "::1", "localhost"}
 
+# 与前端（React 页面）同一套设计语言：#f5f6f8 底、白色圆角卡片、#0078d4 主色
 _PAGE = """<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>系统维护 · 本机专用</title>
+<title>系统维护 · 团校积分系统</title>
 <style>
   * {{ box-sizing: border-box; }}
-  body {{ font-family: "Segoe UI", "Microsoft YaHei", sans-serif; margin: 0;
-         background: linear-gradient(180deg, #eef1f5 0%%, #f7f7f8 100%%);
-         min-height: 100vh; color: #1b1b1b; }}
-  .topbar {{ background: #1b1b1b; color: #fff; padding: 18px 24px;
-            display: flex; align-items: center; gap: 12px; }}
-  .topbar .dot {{ width: 10px; height: 10px; border-radius: 50%%;
-                 background: #4cc2ff; box-shadow: 0 0 8px #4cc2ff; }}
-  .topbar h1 {{ font-size: 17px; margin: 0; font-weight: 600; letter-spacing: .5px; }}
-  .topbar .badge {{ margin-left: auto; font-size: 12px; color: #9fd8ff;
-                   border: 1px solid #3a5a70; border-radius: 999px; padding: 3px 12px; }}
+  body {{ font-family: "Microsoft YaHei", "Segoe UI", system-ui, -apple-system, sans-serif;
+         margin: 0; background: #f5f6f8; min-height: 100vh; color: #1f1f1f; }}
+  .topbar {{ background: #fff; border-bottom: 1px solid #ececec; padding: 0 24px;
+            height: 60px; display: flex; align-items: center; gap: 12px;
+            position: sticky; top: 0; z-index: 10; }}
+  .topbar .logo {{ width: 34px; height: 34px; border-radius: 9px; color: #fff; font-size: 18px;
+                  display: flex; align-items: center; justify-content: center;
+                  background: linear-gradient(135deg, #0078d4, #00bcf2);
+                  box-shadow: 0 4px 12px rgba(0,120,212,.3); }}
+  .topbar h1 {{ font-size: 16px; margin: 0; font-weight: 600; }}
+  .topbar .sub {{ font-size: 12px; color: #999; margin-left: 2px; }}
+  .topbar .badge {{ margin-left: auto; font-size: 12px; color: #0078d4; background: rgba(0,120,212,.08);
+                   border: 1px solid rgba(0,120,212,.25); border-radius: 999px; padding: 4px 12px; }}
   .wrap {{ max-width: 720px; margin: 0 auto; padding: 28px 16px 56px; }}
-  .notice {{ background: #fff8e6; border: 1px solid #f0d48a; border-radius: 10px;
-            padding: 12px 16px; font-size: 13px; color: #6b5200; margin-bottom: 24px; }}
-  .card {{ background: #fff; border-radius: 14px; padding: 24px 28px; margin-bottom: 24px;
-          box-shadow: 0 2px 10px rgba(0,0,0,.06), 0 0 0 1px rgba(0,0,0,.04); }}
+  .notice {{ background: #fff; border: 1px solid rgba(209,52,56,.25); border-left: 4px solid #d13438;
+            border-radius: 12px; padding: 14px 18px; font-size: 13px; color: #6b3a3c;
+            line-height: 1.8; margin-bottom: 24px; box-shadow: 0 2px 8px rgba(0,0,0,.05); }}
+  .card {{ background: #fff; border-radius: 12px; padding: 24px 28px; margin-bottom: 20px;
+          box-shadow: 0 2px 8px rgba(0,0,0,.05); }}
   .card-head {{ display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }}
-  .card-head .icon {{ width: 38px; height: 38px; border-radius: 10px; font-size: 19px;
+  .card-head .icon {{ width: 36px; height: 36px; border-radius: 9px; font-size: 17px;
                      display: flex; align-items: center; justify-content: center; color: #fff; }}
   .icon.red {{ background: linear-gradient(135deg, #d13438, #ff6b6b); }}
   .icon.blue {{ background: linear-gradient(135deg, #0078d4, #00bcf2); }}
   .icon.green {{ background: linear-gradient(135deg, #107c10, #4cc26b); }}
-  .card-head h2 {{ font-size: 16px; margin: 0; }}
-  .card-head .tag {{ font-size: 11px; color: #666; margin-top: 2px; }}
-  .desc {{ color: #555; font-size: 13px; line-height: 1.7; margin: 8px 0 14px; }}
-  .divider {{ border: 0; border-top: 1px dashed #ddd; margin: 18px 0; }}
-  label {{ display: block; font-size: 13px; font-weight: 600; color: #333; margin: 14px 0 5px; }}
+  .card-head h2 {{ font-size: 16px; margin: 0; font-weight: 600; }}
+  .card-head .tag {{ font-size: 12px; color: #999; margin-top: 2px; }}
+  .desc {{ color: #616161; font-size: 13px; line-height: 1.8; margin: 8px 0 14px; }}
+  .divider {{ border: 0; border-top: 1px solid #f0f0f0; margin: 20px 0; }}
+  label {{ display: block; font-size: 13px; font-weight: 500; color: #333; margin: 14px 0 6px; }}
+  label .req {{ color: #d13438; }}
   input[type=text], input[type=email], input[type=password] {{
-      width: 100%%; padding: 9px 12px; font-size: 14px; border: 1px solid #cfcfcf;
-      border-radius: 8px; outline: none; transition: border-color .15s, box-shadow .15s; }}
+      width: 100%%; padding: 9px 12px; font-size: 14px; border: 1px solid #d1d1d1;
+      border-radius: 8px; outline: none; transition: border-color .15s, box-shadow .15s;
+      background: #fff; color: #1f1f1f; }}
   input:focus {{ border-color: #0078d4; box-shadow: 0 0 0 3px rgba(0,120,212,.15); }}
-  input[readonly] {{ background: #f6f6f6; font-family: Consolas, monospace; color: #444; }}
+  input[readonly] {{ background: #f5f6f8; font-family: Consolas, monospace; color: #444; }}
   .btn {{ display: inline-block; border: 0; border-radius: 8px; padding: 10px 22px;
          font-size: 14px; cursor: pointer; margin-top: 16px; color: #fff;
-         text-decoration: none; transition: filter .15s; }}
-  .btn:hover {{ filter: brightness(1.08); }}
+         text-decoration: none; transition: filter .15s, box-shadow .15s;
+         box-shadow: 0 2px 6px rgba(0,0,0,.12); }}
+  .btn:hover {{ filter: brightness(1.07); }}
+  .btn.primary {{ background: #0078d4; }}
   .btn.red {{ background: #d13438; }}
-  .btn.blue {{ background: #0078d4; }}
   .btn.green {{ background: #107c10; }}
-  .btn.gray {{ background: #5a5a5a; }}
-  .hint {{ color: #8a8a8a; font-size: 12px; margin-top: 4px; }}
-  .result-icon {{ font-size: 40px; text-align: center; margin-bottom: 8px; }}
-  .secret {{ display: block; background: #f6f6f6; border: 1px dashed #bbb; border-radius: 8px;
+  .btn.gray {{ background: #fff; color: #1f1f1f; border: 1px solid #d1d1d1; box-shadow: none; }}
+  .hint {{ color: #999; font-size: 12px; margin-top: 5px; }}
+  .result-icon {{ width: 56px; height: 56px; border-radius: 50%%; margin: 4px auto 14px;
+                 display: flex; align-items: center; justify-content: center; font-size: 26px; color: #fff; }}
+  .result-icon.ok {{ background: linear-gradient(135deg, #107c10, #4cc26b); }}
+  .result-icon.bad {{ background: linear-gradient(135deg, #d13438, #ff6b6b); }}
+  .secret {{ display: block; background: #f5f6f8; border: 1px dashed #c8c8c8; border-radius: 10px;
             padding: 14px 16px; font-family: Consolas, monospace; font-size: 17px;
-            text-align: center; word-break: break-all; margin: 12px 0; }}
-  .qr {{ text-align: center; margin: 14px 0; }}
-  .qr img {{ border: 1px solid #e0e0e0; border-radius: 10px; padding: 8px; background: #fff; }}
+            text-align: center; word-break: break-all; margin: 12px 0; letter-spacing: 2px; }}
+  .qr {{ text-align: center; margin: 16px 0; }}
+  .qr img {{ border: 1px solid #e0e0e0; border-radius: 12px; padding: 10px; background: #fff;
+            box-shadow: 0 2px 8px rgba(0,0,0,.05); }}
   pre.debug {{ background: #1e1e1e; color: #9cdcfe; font-size: 12px; border-radius: 8px;
               padding: 12px 14px; overflow-x: auto; line-height: 1.6; }}
 </style>
 </head>
 <body>
   <div class="topbar">
-    <span class="dot"></span>
-    <h1>团校积分系统 · 系统维护</h1>
+    <span class="logo">🛠</span>
+    <h1>团校积分系统</h1><span class="sub">系统维护控制台</span>
     <span class="badge">仅本机 localhost 可访问</span>
   </div>
   <div class="wrap">
     <div class="notice">⚠️ 本页面集中维护三类敏感信息：<strong>system 密码、system 动态验证码（OTP）、
     邮件服务配置</strong>。它们不会出现在系统的任何其他页面或接口中。
-    重置类操作立即生效，新密码与二维码只在结果页显示一次。</div>
+    新密码与二维码只在结果页显示一次；OTP 需当场输入验证码确认后才会生效。</div>
     {content}
   </div>
 </body>
@@ -152,7 +168,7 @@ def _check_request():
     if not _is_local_request():
         return _render("<p>页面不存在。</p>", 404)
     if request.method == "POST" and not _valid_form_token(request.form.get("form_token", "")):
-        return _render(_result("⚠️", "表单已过期", "请返回维护页面重新操作。", False), 403)
+        return _render(_result("表单已过期", "请返回维护页面重新操作。", False), 403)
     return None
 
 
@@ -160,11 +176,12 @@ def _esc(value: str) -> str:
     return html.escape(value, quote=True)
 
 
-def _result(icon: str, title: str, body_html: str, success: bool = True) -> str:
-    color = "#107c10" if success else "#d13438"
+def _result(title: str, body_html: str, success: bool = True) -> str:
+    icon_class = "ok" if success else "bad"
+    icon = "✓" if success else "✕"
     return f"""
-    <div class="card">
-      <div class="result-icon" style="color:{color}">{icon}</div>
+    <div class="card" style="max-width:560px;margin:0 auto">
+      <div class="result-icon {icon_class}">{icon}</div>
       <h2 style="text-align:center;margin:0 0 14px;font-size:18px">{title}</h2>
       <div class="desc" style="margin-bottom:0">{body_html}</div>
       <div style="text-align:center">
@@ -199,13 +216,14 @@ def _console_content() -> str:
     <div class="card">
       <div class="card-head">
         <span class="icon blue">🛡️</span>
-        <div><h2>system 动态验证码（OTP）</h2><div class="tag">重新生成密钥并展示绑定二维码</div></div>
+        <div><h2>system 动态验证码（OTP）</h2><div class="tag">扫码并输入验证码确认后才生效</div></div>
       </div>
-      <p class="desc">登录除密码外还需验证器中的 6 位动态验证码。重置后旧验证器立即失效，
-      请当场用验证器应用（Microsoft / Google Authenticator 或微信验证器小程序）扫码绑定。</p>
+      <p class="desc">登录除密码外还需验证器中的 6 位动态验证码。点击后将生成候选二维码，
+      用验证器应用（Microsoft / Google Authenticator 或微信验证器小程序）扫码并输入验证码确认，
+      新 OTP 才会替换旧的；中途放弃则原有 OTP 保持不变。</p>
       <form method="post" action="/local/system/reset-otp">
         <input type="hidden" name="form_token" value="{token}">
-        <button class="btn blue" type="submit">重置 OTP 并显示二维码</button>
+        <button class="btn primary" type="submit">生成新的 OTP 二维码</button>
       </form>
     </div>
     """
@@ -225,7 +243,7 @@ def _console_content() -> str:
     <div class="card">
       <div class="card-head">
         <span class="icon green">✉️</span>
-        <div><h2>邮件服务配置</h2><div class="tag">注册验证码、OTP 二维码与密码重置邮件的发件通道</div></div>
+        <div><h2>邮件服务配置</h2><div class="tag">注册验证码、OTP 二维码与重置邮件的发件通道</div></div>
       </div>
       <p class="desc">QQ / 163 邮箱需使用 SMTP 授权码（不是登录密码）；
       Outlook 个人邮箱已禁用 SMTP，建议使用 QQ 或 163 邮箱。</p>
@@ -269,12 +287,12 @@ def reset_password():
         return error
     admin = db.session.get(Admin, SYSTEM_ADMIN_ID)
     if admin is None:
-        return _render(_result("⚠️", "system 账号不存在", "请重启服务以自动创建。", False), 500)
+        return _render(_result("system 账号不存在", "请重启服务以自动创建。", False), 500)
 
     password = request.form.get("new_password", "")
     if password and len(password) < MIN_PASSWORD_LENGTH:
         return _render(
-            _result("⚠️", "密码太短", f"自定义密码至少需要 {MIN_PASSWORD_LENGTH} 位字符。", False),
+            _result("密码太短", f"自定义密码至少需要 {MIN_PASSWORD_LENGTH} 位字符。", False),
             400,
         )
     generated = not password
@@ -285,7 +303,6 @@ def reset_password():
     source = "系统随机生成的强密码" if generated else "您自定义的密码"
     return _render(
         _result(
-            "✅",
             "密码已重置",
             f"<p>{source}（仅显示这一次，请立即保存）：</p>"
             f'<span class="secret">{password}</span>'
@@ -296,24 +313,72 @@ def reset_password():
 
 @local_admin_bp.post("/local/system/reset-otp")
 def reset_otp():
+    """第一步：生成候选二维码（不生效），等待验证码确认。"""
     error = _check_request()
     if error:
         return error
     admin = db.session.get(Admin, SYSTEM_ADMIN_ID)
     if admin is None:
-        return _render(_result("⚠️", "system 账号不存在", "请重启服务以自动创建。", False), 500)
-    secret, _uri = bind_new_totp(admin)
-    db.session.commit()
-    qr = qr_png_data_uri(provisioning_uri(secret, SYSTEM_ADMIN_ID))
-    return _render(
-        _result(
-            "✅",
-            "OTP 已重置",
-            "<p>请立即用验证器应用扫码绑定，或手动输入下方密钥：</p>"
-            f'<div class="qr"><img src="{qr}" alt="OTP 二维码" width="220" height="220"></div>'
-            f'<span class="secret">{secret}</span>'
-            "<p>此页面关闭后二维码与密钥无法再次查看。</p>",
+        return _render(_result("system 账号不存在", "请重启服务以自动创建。", False), 500)
+
+    ticket, candidate = begin_pending_otp(admin, "admin", "local_system_reset")
+    qr = qr_png_data_uri(provisioning_uri(candidate, SYSTEM_ADMIN_ID))
+    fresh_token = _issue_form_token()
+    content = f"""
+    <div class="card" style="max-width:560px;margin:0 auto">
+      <div class="card-head">
+        <span class="icon blue">🛡️</span>
+        <div><h2>绑定新的 system OTP</h2><div class="tag">确认前原有 OTP 仍然有效</div></div>
+      </div>
+      <p class="desc">请用验证器应用扫描下方二维码，或手动输入密钥：</p>
+      <div class="qr"><img src="{qr}" alt="OTP 二维码" width="220" height="220"></div>
+      <span class="secret">{candidate}</span>
+      <form method="post" action="/local/system/reset-otp/confirm">
+        <input type="hidden" name="form_token" value="{fresh_token}">
+        <input type="hidden" name="bind_ticket" value="{_esc(ticket)}">
+        <label for="otp_code">输入验证器中显示的 6 位验证码以确认生效 <span class="req">*</span></label>
+        <input type="text" id="otp_code" name="otp_code" inputmode="numeric" maxlength="6"
+               autocomplete="one-time-code" placeholder="6 位数字"
+               style="text-align:center;letter-spacing:8px;font-size:18px">
+        <button class="btn primary" type="submit" style="width:100%">验证并生效</button>
+      </form>
+      <div style="text-align:center">
+        <a class="btn gray" href="/local/system">放弃（保持原有 OTP）</a>
+      </div>
+    </div>
+    """
+    return _render(content)
+
+
+@local_admin_bp.post("/local/system/reset-otp/confirm")
+def confirm_reset_otp():
+    """第二步：验证码证明候选密钥已被扫码收录，此时才写入。"""
+    error = _check_request()
+    if error:
+        return error
+    admin = db.session.get(Admin, SYSTEM_ADMIN_ID)
+    if admin is None:
+        return _render(_result("system 账号不存在", "请重启服务以自动创建。", False), 500)
+
+    ticket = request.form.get("bind_ticket", "")
+    code = request.form.get("otp_code", "").strip()
+    claims, decode_error = decode_pending_otp(ticket)
+    if (
+        claims is None
+        or claims.get("purpose") != "local_system_reset"
+        or claims.get("sub") != SYSTEM_ADMIN_ID
+    ):
+        return _render(_result("绑定请求无效或已过期", decode_error or "请返回维护页面重新生成二维码。", False), 400)
+    if not verify_totp(claims["candidate_secret"], code):
+        return _render(
+            _result("验证码错误", "请确认已扫描最新二维码，然后返回重新生成并立即输入验证码。", False),
+            400,
         )
+
+    set_totp_secret(admin, claims["candidate_secret"])
+    db.session.commit()
+    return _render(
+        _result("OTP 已生效", "<p>新的动态验证码已绑定成功，旧验证器立即失效。下次登录请使用新验证码。</p>")
     )
 
 
@@ -335,7 +400,7 @@ def save_email_config():
             new_password, current_app.config["SECRET_KEY"]
         )
     db.session.commit()
-    return _render(_result("✅", "邮箱配置已保存", "注册验证码、OTP 与重置邮件将使用该配置发送。"))
+    return _render(_result("邮箱配置已保存", "注册验证码、OTP 与重置邮件将使用该配置发送。"))
 
 
 @local_admin_bp.post("/local/system/test-email")
@@ -345,12 +410,12 @@ def test_email():
         return error
     address = request.form.get("test_email", "").strip()
     if not address:
-        return _render(_result("⚠️", "缺少收件地址", "请输入接收测试邮件的地址。", False))
+        return _render(_result("缺少收件地址", "请输入接收测试邮件的地址。", False))
     success, message, debug_info = emailer.send_test_email(address, debug=True)
     debug_block = ""
     if debug_info:
         lines = "\n".join(_esc(line) for line in debug_info)
         debug_block = f"<pre class='debug'>{lines}</pre>"
     if success:
-        return _render(_result("✅", "测试邮件发送成功", f"<p>已发送至 {_esc(address)}。</p>{debug_block}"))
-    return _render(_result("❌", "测试邮件发送失败", f"<p>{_esc(message)}</p>{debug_block}", False))
+        return _render(_result("测试邮件发送成功", f"<p>已发送至 {_esc(address)}。</p>{debug_block}"))
+    return _render(_result("测试邮件发送失败", f"<p>{_esc(message)}</p>{debug_block}", False))

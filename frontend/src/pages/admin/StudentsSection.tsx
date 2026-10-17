@@ -11,7 +11,7 @@ import {
   resetStudentOtp,
   updateAdminStudentInfo,
 } from "@/api/service";
-import type { AdminOtpBundle, AdminStudent } from "@/api/types";
+import type { AdminStudent } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Input, Textarea } from "@/components/ui/input";
@@ -24,7 +24,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { OtpBundleDialog } from "@/components/OtpBundleDialog";
 import { Field } from "@/components/common";
 
 const PHONE_PATTERN = /^1[3-9]\d{9}$/;
@@ -39,7 +38,6 @@ export function StudentsSection({ canEdit }: { canEdit: boolean }) {
   const [passwordTarget, setPasswordTarget] = useState<AdminStudent | null>(null);
   const [resetOtpTarget, setResetOtpTarget] = useState<AdminStudent | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AdminStudent | null>(null);
-  const [otpBundle, setOtpBundle] = useState<AdminOtpBundle | null>(null);
 
   const load = useCallback(() => {
     getAdminStudents()
@@ -164,19 +162,13 @@ export function StudentsSection({ canEdit }: { canEdit: boolean }) {
       <ConfirmDialog
         open={resetOtpTarget !== null}
         onOpenChange={(open) => !open && setResetOtpTarget(null)}
-        message={`确定重置学生"${resetOtpTarget?.name ?? ""}"的动态验证码？旧验证器将立即失效，新二维码需转交学生重新绑定。`}
+        message={`确定重置学生"${resetOtpTarget?.name ?? ""}"的动态验证码？该学生的 OTP 将立即变为未绑定状态，其下次登录时会自动通过学号邮箱重新绑定。`}
         onConfirm={async () => {
           if (!resetOtpTarget) return;
           try {
             const result = await resetStudentOtp(resetOtpTarget.student_id);
             if (result.success) {
-              if (result.otp_secret && result.otp_uri && result.otp_qr) {
-                setOtpBundle({
-                  otp_secret: result.otp_secret,
-                  otp_uri: result.otp_uri,
-                  otp_qr: result.otp_qr,
-                });
-              }
+              toast.success(result.message || "已重置为未绑定状态");
               load();
             } else {
               toast.error(result.message || "重置失败");
@@ -205,7 +197,6 @@ export function StudentsSection({ canEdit }: { canEdit: boolean }) {
           }
         }}
       />
-      <OtpBundleDialog bundle={otpBundle} onOpenChange={(open) => !open && setOtpBundle(null)} />
     </section>
   );
 }

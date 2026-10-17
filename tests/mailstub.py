@@ -9,9 +9,16 @@ pytest 会以 `conftest` 为模块名加载 conftest.py，若测试文件再
 SENT_MAIL: list[dict] = []
 
 
-def stub_send_email(to_email, subject, body, attachments=None):
+def stub_send_email(to_email, subject, body, attachments=None, html=None, inline_images=None):
     """send_email 的测试替身：记录参数并假装成功。"""
     SENT_MAIL.append(
-        {"to": to_email, "subject": subject, "body": body, "attachments": attachments or []}
+        {
+            "to": to_email,
+            "subject": subject,
+            "body": body,
+            "html": html or "",
+            "attachments": attachments or [],
+            "inline_images": inline_images or [],
+        }
     )
     return True, "邮件发送成功（测试环境，未真实发送）"

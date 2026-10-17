@@ -158,11 +158,16 @@ export interface AdminAccount {
   has_otp: boolean;
 }
 
-/** 创建/重置管理员 OTP 后一次性返回的绑定信息（仅本次响应可见）。 */
+/** 创建/重置 OTP 后一次性返回的绑定信息（仅本次响应可见）。 */
 export interface AdminOtpBundle {
   otp_secret: string;
   otp_uri: string;
   otp_qr: string;
+}
+
+/** 待生效的 OTP 绑定：二维码 + 票据，验证/确认后候选密钥才写入。 */
+export interface OtpBindChallenge extends AdminOtpBundle {
+  ticket: string;
 }
 
 export interface AdminActivity {

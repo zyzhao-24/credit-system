@@ -19,6 +19,7 @@ import type {
   CustomQuestion,
   LoginStepOneResponse,
   MyRegistration,
+  OtpBindChallenge,
   StudentActivities,
   StudentProfile,
   TokenResponse,
@@ -82,15 +83,41 @@ export async function registerStudent(payload: {
   password: string;
   suggestion: string;
   email_code: string;
-}): Promise<BasicResponse> {
-  const { data } = await api.post<BasicResponse>("/api/student/register", payload);
+}): Promise<BasicResponse & { otp_bind?: OtpBindChallenge }> {
+  const { data } = await api.post<BasicResponse & { otp_bind?: OtpBindChallenge }>(
+    "/api/student/register",
+    payload,
+  );
   return data;
 }
 
-export async function forgotPassword(studentId: string): Promise<BasicResponse> {
-  const { data } = await api.post<BasicResponse>("/api/student/forgot_password", {
+/** 确认待生效的 OTP 绑定：验证码证明已扫码后才写入。 */
+export async function confirmOtpBind(ticket: string, otpCode: string): Promise<BasicResponse> {
+  const { data } = await api.post<BasicResponse>("/api/auth/otp/bind/confirm", {
+    ticket,
+    otp_code: otpCode,
+  });
+  return data;
+}
+
+/** 忘记密码第一步：向学号邮箱发送验证码。 */
+export async function sendForgotPasswordCode(studentId: string): Promise<BasicResponse> {
+  const { data } = await api.post<BasicResponse>("/api/student/forgot_password/send_code", {
     student_id: studentId,
   });
+  return data;
+}
+
+/** 忘记密码第二步：邮箱验证码 + 自设新密码，成功后可选择重绑 OTP。 */
+export async function forgotPassword(
+  studentId: string,
+  newPassword: string,
+  emailCode: string,
+): Promise<BasicResponse & { otp_bind?: OtpBindChallenge }> {
+  const { data } = await api.post<BasicResponse & { otp_bind?: OtpBindChallenge }>(
+    "/api/student/forgot_password",
+    { student_id: studentId, new_password: newPassword, email_code: emailCode },
+  );
   return data;
 }
 
@@ -249,13 +276,20 @@ export async function updateAdminStudentInfo(payload: {
   return data;
 }
 
-/** 重置学生的 OTP，二维码/密钥一次性返回给管理员转交（不发邮件）。 */
-export async function resetStudentOtp(
-  studentId: string,
-): Promise<BasicResponse & Partial<AdminOtpBundle>> {
-  const { data } = await api.post<BasicResponse & Partial<AdminOtpBundle>>(
-    "/api/admin/students/reset_otp",
-    { student_id: studentId },
+/** 重置学生的 OTP：仅置为未绑定状态，学生下次登录时自动经邮箱重新绑定。 */
+export async function resetStudentOtp(studentId: string): Promise<BasicResponse> {
+  const { data } = await api.post<BasicResponse>("/api/admin/students/reset_otp", {
+    student_id: studentId,
+  });
+  return data;
+}
+
+/** 学生主动重置 OTP：返回待生效的绑定二维码，验证码确认后才写入。 */
+export async function beginStudentOtpReset(): Promise<
+  BasicResponse & { otp_bind?: OtpBindChallenge }
+> {
+  const { data } = await api.post<BasicResponse & { otp_bind?: OtpBindChallenge }>(
+    "/api/student/otp/reset",
   );
   return data;
 }
@@ -331,14 +365,20 @@ export async function createAdmin(payload: {
   return data;
 }
 
-/** 重置普通管理员的 OTP，返回新的二维码/密钥（仅本次响应可见）。 */
+/** 重置普通管理员的 OTP 第一步：返回待生效的二维码/密钥（仅本次响应可见）。 */
 export async function resetAdminOtp(
   adminId: string,
-): Promise<BasicResponse & Partial<AdminOtpBundle>> {
-  const { data } = await api.post<BasicResponse & Partial<AdminOtpBundle>>(
+): Promise<BasicResponse & Partial<OtpBindChallenge>> {
+  const { data } = await api.post<BasicResponse & Partial<OtpBindChallenge>>(
     "/api/admin/admins/reset_otp",
     { admin_id: adminId },
   );
+  return data;
+}
+
+/** 重置普通管理员的 OTP 第二步：系统管理员二次确认后候选密钥才生效。 */
+export async function confirmAdminOtpReset(ticket: string): Promise<BasicResponse> {
+  const { data } = await api.post<BasicResponse>("/api/admin/admins/reset_otp/confirm", { ticket });
   return data;
 }
 

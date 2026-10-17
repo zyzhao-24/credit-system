@@ -11,6 +11,7 @@ from backend.extensions import db
 from backend.models import Activity, Category, Student
 from backend.services.credits import calculate_student_credits
 from backend.services.legacy_import import DATETIME_FORMAT
+from backend.services.otp_service import begin_pending_otp, pending_otp_bundle
 from backend.services.students import PHONE_PATTERN
 from backend.utils.passwords import client_password_digest, hash_password_digest, verify_password_digest
 
@@ -62,6 +63,23 @@ def change_password():
     student.password_reset_required = False
     db.session.commit()
     return jsonify({"success": True, "message": "密码修改成功"})
+
+
+@student_bp.post("/api/student/otp/reset")
+@require_student
+def reset_own_otp():
+    """学生主动重置 OTP：返回一次性绑定票据与二维码，不立即生效。
+
+    学生在弹窗中扫码并输入验证码，经 /api/auth/otp/bind/confirm 验证通过后
+    新密钥才写入；中途放弃则原有 OTP 保持不变。
+    """
+    student = db.session.get(Student, g.current_identity.get("sub"))
+    if student is None:
+        return _error("学生不存在")
+    ticket, candidate = begin_pending_otp(student, "student", "student_reset")
+    return jsonify(
+        {"success": True, "otp_bind": pending_otp_bundle(ticket, candidate, student.student_id)}
+    )
 
 
 @student_bp.get("/api/student/activities")

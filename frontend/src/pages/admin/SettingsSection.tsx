@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { errorMessage } from "@/api/client";
 import {
+  confirmAdminOtpReset,
   createAdmin,
   createCategory,
   createDepartment,
@@ -17,7 +18,7 @@ import {
   updateAdmin,
 } from "@/api/service";
 import { useAuth } from "@/auth/auth-context";
-import type { AdminAccount, AdminCategory, AdminOtpBundle } from "@/api/types";
+import type { AdminAccount, AdminCategory, AdminOtpBundle, OtpBindChallenge } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
@@ -320,6 +321,7 @@ function AdminsBlock({ currentAdminId }: { currentAdminId: string }) {
   const [deleteTarget, setDeleteTarget] = useState<AdminAccount | null>(null);
   const [resetOtpTarget, setResetOtpTarget] = useState<AdminAccount | null>(null);
   const [otpBundle, setOtpBundle] = useState<AdminOtpBundle | null>(null);
+  const [resetChallenge, setResetChallenge] = useState<OtpBindChallenge | null>(null);
 
   const load = useCallback(() => {
     getAdmins()
@@ -335,11 +337,6 @@ function AdminsBlock({ currentAdminId }: { currentAdminId: string }) {
   }, []);
 
   useEffect(load, [load]);
-
-  const toBundle = (result: Partial<AdminOtpBundle>): AdminOtpBundle | null =>
-    result.otp_secret && result.otp_uri && result.otp_qr
-      ? { otp_secret: result.otp_secret, otp_uri: result.otp_uri, otp_qr: result.otp_qr }
-      : null;
 
   return (
     <section>
@@ -431,16 +428,19 @@ function AdminsBlock({ currentAdminId }: { currentAdminId: string }) {
       <ConfirmDialog
         open={resetOtpTarget !== null}
         onOpenChange={(open) => !open && setResetOtpTarget(null)}
-        message={`确定重置管理员"${resetOtpTarget?.admin_id ?? ""}"的动态验证码？旧验证器将立即失效。`}
+        message={`确定重置管理员"${resetOtpTarget?.admin_id ?? ""}"的动态验证码？将生成新的绑定二维码，二次确认生效前旧验证码保持不变。`}
         onConfirm={async () => {
           if (!resetOtpTarget) return;
           try {
             const result = await resetAdminOtp(resetOtpTarget.admin_id);
-            if (result.success) {
-              const bundle = toBundle(result);
-              if (bundle) setOtpBundle(bundle);
-              load();
-            } else {
+            if (result.success && result.ticket && result.otp_secret && result.otp_uri && result.otp_qr) {
+              setResetChallenge({
+                ticket: result.ticket,
+                otp_secret: result.otp_secret,
+                otp_uri: result.otp_uri,
+                otp_qr: result.otp_qr,
+              });
+            } else if (!result.success) {
               toast.error(result.message || "重置失败");
             }
           } catch (error) {
@@ -464,6 +464,32 @@ function AdminsBlock({ currentAdminId }: { currentAdminId: string }) {
         }}
       />
       <OtpBundleDialog bundle={otpBundle} onOpenChange={(open) => !open && setOtpBundle(null)} />
+      <OtpBundleDialog
+        bundle={resetChallenge}
+        title="重置管理员 OTP"
+        onOpenChange={(open) => {
+          if (!open) setResetChallenge(null);
+        }}
+        activation={{
+          type: "confirm",
+          onConfirm: async () => {
+            if (!resetChallenge) return false;
+            try {
+              const result = await confirmAdminOtpReset(resetChallenge.ticket);
+              if (result.success) {
+                toast.success(result.message || "动态验证码已生效");
+                load();
+                return true;
+              }
+              toast.error(result.message || "确认失败");
+              return false;
+            } catch (error) {
+              toast.error(errorMessage(error, "确认失败"));
+              return false;
+            }
+          },
+        }}
+      />
     </section>
   );
 }

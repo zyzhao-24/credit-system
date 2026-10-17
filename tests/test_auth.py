@@ -4,7 +4,7 @@ import pyotp
 
 from backend.models import Admin, Student
 from backend.services.otp_service import get_totp_secret
-from backend.utils.passwords import client_password_digest
+from backend.utils.passwords import client_password_digest, verify_password_digest
 from mailstub import SENT_MAIL
 
 
@@ -37,7 +37,10 @@ def test_password_step_requires_otp_then_me(app, database, seed_legacy_payload, 
     secret = get_totp_secret(student)
     assert secret
     assert any(mail["to"].startswith("1001") for mail in SENT_MAIL)
-    assert any(mail["attachments"] for mail in SENT_MAIL)
+    # OTP 邮件内嵌二维码（Content-ID 图片）并带 HTML 排版
+    otp_mail = next(m for m in SENT_MAIL if m["to"].startswith("1001"))
+    assert otp_mail["inline_images"]
+    assert otp_mail["html"].startswith("<!DOCTYPE html>")
 
     wrong = client.post(
         "/api/auth/token/verify",
@@ -103,7 +106,8 @@ def test_wrong_password_is_rejected(app, database, seed_legacy_payload, minimal_
     assert response.status_code == 401
 
 
-def test_registration_requires_email_code_and_binds_otp(app, database):
+def test_registration_then_otp_bind_dialog(app, database):
+    """注册：邮箱验证码通过才注册；OTP 在注册后弹窗中验证确认才绑定。"""
     client = app.test_client()
 
     # 配置学生邮箱后缀（邮件已打桩，不会真实发送）
@@ -156,7 +160,10 @@ def test_registration_requires_email_code_and_binds_otp(app, database):
         },
     )
     assert response.status_code == 200
-    assert response.get_json()["success"] is True
+    payload = response.get_json()
+    assert payload["success"] is True
+    bundle = payload["otp_bind"]
+    assert bundle["ticket"] and bundle["otp_secret"] and bundle["otp_qr"].startswith("data:image/png")
 
     student = database.session.get(Student, "2001")
     assert student.password_hash.startswith("pbkdf2:sha256:")
@@ -164,10 +171,26 @@ def test_registration_requires_email_code_and_binds_otp(app, database):
     assert student.wechat == "new-wechat"
     assert student.phone == "13700000000"
     assert student.info_updated_at is not None
-    # 注册成功后 OTP 已绑定，且二维码邮件已（打桩）发送
-    assert get_totp_secret(student)
-    otp_mail = next(m for m in SENT_MAIL if "绑定动态验证码" in m["subject"])
-    assert otp_mail["attachments"]
+    # 注册本身不绑定 OTP、也不发 OTP 邮件（绑定在弹窗中验证确认才生效）
+    assert not get_totp_secret(student)
+    assert not any("动态验证码" in m["subject"] for m in SENT_MAIL)
+
+    # 错误验证码不生效
+    wrong = client.post(
+        "/api/auth/otp/bind/confirm", json={"ticket": bundle["ticket"], "otp_code": "000000"}
+    )
+    assert wrong.get_json()["success"] is False
+    database.session.refresh(student)
+    assert not get_totp_secret(student)
+
+    # 正确验证码确认后才绑定
+    ok = client.post(
+        "/api/auth/otp/bind/confirm",
+        json={"ticket": bundle["ticket"], "otp_code": pyotp.TOTP(bundle["otp_secret"]).now()},
+    )
+    assert ok.get_json()["success"] is True
+    database.session.refresh(student)
+    assert get_totp_secret(student) == bundle["otp_secret"]
 
 
 def test_registration_wrong_email_code_rejected(app, database):
@@ -193,3 +216,103 @@ def test_registration_wrong_email_code_rejected(app, database):
     )
     assert response.get_json()["success"] is False
     assert database.session.get(Student, "2002") is None
+
+
+def test_forgot_password_email_code_then_optional_otp_rebind(
+    app, database, seed_legacy_payload, minimal_payload
+):
+    """忘记密码与注册同构：邮箱验证码 → 重置密码 → 可选弹窗重绑 OTP（验证才生效）。"""
+    import re
+
+    from backend.models import EmailConfig
+
+    seed_legacy_payload(minimal_payload)
+    config = database.session.get(EmailConfig, 1)
+    config.service_email = "service@example.com"
+    config.student_email_suffix = "@stu.example.com"
+    database.session.commit()
+    client = app.test_client()
+    student = database.session.get(Student, "1001")
+    old_password_hash = student.password_hash
+    old_otp = get_totp_secret(student)
+
+    # 未知学号返回通用提示（不枚举学号），已存在学号发送验证码
+    ghost = client.post("/api/student/forgot_password/send_code", json={"student_id": "9999"})
+    assert ghost.get_json()["success"] is True
+    sent = client.post("/api/student/forgot_password/send_code", json={"student_id": "1001"})
+    assert sent.get_json()["success"] is True
+    code_mail = next(m for m in SENT_MAIL if "重置密码验证码" in m["subject"])
+    code = re.search(r"\b(\d{6})\b", code_mail["body"]).group(1)
+
+    # 验证码错误：密码不变
+    wrong = client.post(
+        "/api/student/forgot_password",
+        json={"student_id": "1001", "new_password": "brandnew1", "email_code": "000000"},
+    )
+    assert wrong.get_json()["success"] is False
+    database.session.refresh(student)
+    assert student.password_hash == old_password_hash
+
+    # 验证码正确：密码重置，并返回可选的 OTP 重绑票据
+    ok = client.post(
+        "/api/student/forgot_password",
+        json={"student_id": "1001", "new_password": "brandnew1", "email_code": code},
+    )
+    payload = ok.get_json()
+    assert payload["success"] is True
+    bundle = payload["otp_bind"]
+    database.session.refresh(student)
+    assert verify_password_digest(student.password_hash, client_password_digest("brandnew1"))
+    # 重绑验证前 OTP 保持原样；验证通过才替换
+    assert get_totp_secret(student) == old_otp
+    confirm = client.post(
+        "/api/auth/otp/bind/confirm",
+        json={"ticket": bundle["ticket"], "otp_code": pyotp.TOTP(bundle["otp_secret"]).now()},
+    )
+    assert confirm.get_json()["success"] is True
+    database.session.refresh(student)
+    assert get_totp_secret(student) == bundle["otp_secret"]
+
+    # 新密码 + 新 OTP 可以完成两步登录
+    step1 = _step1(client, "1001", "brandnew1", "student")
+    assert step1.status_code == 200
+    step2 = client.post(
+        "/api/auth/token/verify",
+        json={
+            "otp_ticket": step1.get_json()["otp_ticket"],
+            "otp_code": pyotp.TOTP(bundle["otp_secret"]).now(),
+        },
+    )
+    assert step2.status_code == 200
+
+
+def test_student_self_otp_reset_requires_code(app, database, seed_legacy_payload, minimal_payload, login):
+    """学生主动重置 OTP：候选二维码验证通过才生效，否则旧 OTP 不变。"""
+    seed_legacy_payload(minimal_payload)
+    client = app.test_client()
+    token = login("1001", "pass123", "student")
+    headers = {"Authorization": token}
+    student = database.session.get(Student, "1001")
+    old_otp = get_totp_secret(student)
+    assert old_otp
+
+    begin = client.post("/api/student/otp/reset", headers=headers)
+    bundle = begin.get_json()["otp_bind"]
+    assert bundle["ticket"] and bundle["otp_qr"].startswith("data:image/png")
+    database.session.refresh(student)
+    assert get_totp_secret(student) == old_otp  # 尚未生效
+
+    wrong = client.post(
+        "/api/auth/otp/bind/confirm", json={"ticket": bundle["ticket"], "otp_code": "000000"}
+    )
+    assert wrong.get_json()["success"] is False
+    database.session.refresh(student)
+    assert get_totp_secret(student) == old_otp
+
+    ok = client.post(
+        "/api/auth/otp/bind/confirm",
+        json={"ticket": bundle["ticket"], "otp_code": pyotp.TOTP(bundle["otp_secret"]).now()},
+    )
+    assert ok.get_json()["success"] is True
+    database.session.refresh(student)
+    assert get_totp_secret(student) == bundle["otp_secret"] != old_otp

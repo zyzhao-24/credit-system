@@ -4,18 +4,21 @@ import { toast } from "sonner";
 import { GraduationCap } from "lucide-react";
 import { errorMessage } from "@/api/client";
 import {
+  confirmOtpBind,
   forgotPassword,
   loginWithToken,
   registerStudent,
+  sendForgotPasswordCode,
   sendRegistrationCode,
   verifyOtpCode,
 } from "@/api/service";
-import { isOtpRequired } from "@/api/types";
+import { isOtpRequired, type OtpBindChallenge } from "@/api/types";
 import { useAuth } from "@/auth/auth-context";
 import { sha256Hex } from "@/lib/sha256";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Input, Textarea } from "@/components/ui/input";
+import { OtpBundleDialog } from "@/components/OtpBundleDialog";
 import { Field } from "@/components/common";
 
 const PHONE_PATTERN = /^1[3-9]\d{9}$/;
@@ -216,6 +219,8 @@ function RegisterDialog({
   const [submitting, setSubmitting] = useState(false);
   const [sendingCode, setSendingCode] = useState(false);
   const [countdown, setCountdown] = useState(0);
+  const [bindChallenge, setBindChallenge] = useState<OtpBindChallenge | null>(null);
+  const [bindDone, setBindDone] = useState(false);
 
   // 发送验证码后的倒计时，期间禁止重复发送
   useEffect(() => {
@@ -288,10 +293,12 @@ function RegisterDialog({
         suggestion: suggestion.trim(),
       });
       if (result.success) {
-        toast.success(result.message || "注册成功！请查收邮箱中的动态验证码绑定二维码");
+        toast.success(result.message || "注册成功");
         onOpenChange(false);
         reset();
         onRegistered(student_id.trim());
+        // 注册成功后立即弹窗绑定 OTP；放弃则保持未绑定，首次登录时会自动发邮件
+        if (result.otp_bind) setBindChallenge(result.otp_bind);
       } else {
         toast.error(result.message || "注册失败");
       }
@@ -303,8 +310,9 @@ function RegisterDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent title="初级团校报名注册" className="max-w-[500px]">
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent title="初级团校报名注册" className="max-w-[500px]">
         <p className="text-[13px] text-[#666] -mt-2 mb-4">请填写以下信息完成注册</p>
         <Field label="您的姓名" required>
           <Input value={form.name} onChange={(e) => set("name")(e.target.value)} placeholder="请输入真实姓名" />
@@ -384,8 +392,38 @@ function RegisterDialog({
             取消
           </Button>
         </div>
-      </DialogContent>
-    </Dialog>
+        </DialogContent>
+      </Dialog>
+      <OtpBundleDialog
+        bundle={bindChallenge}
+        title="注册成功：绑定动态验证码"
+        onOpenChange={(isOpen) => {
+          if (isOpen) return;
+          if (!bindDone) toast.info("已跳过 OTP 绑定，首次登录时将自动发送到您的学号邮箱");
+          setBindChallenge(null);
+          setBindDone(false);
+        }}
+        activation={{
+          type: "verify",
+          onVerify: async (code) => {
+            if (!bindChallenge) return false;
+            try {
+              const result = await confirmOtpBind(bindChallenge.ticket, code);
+              if (result.success) {
+                toast.success("动态验证码绑定成功，请使用密码 + 验证码登录");
+                setBindDone(true);
+                return true;
+              }
+              toast.error(result.message || "验证失败");
+              return false;
+            } catch (error) {
+              toast.error(errorMessage(error, "验证失败"));
+              return false;
+            }
+          },
+        }}
+      />
+    </>
   );
 }
 
@@ -397,22 +435,67 @@ function ForgotPasswordDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const [studentId, setStudentId] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [emailCode, setEmailCode] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [sendingCode, setSendingCode] = useState(false);
+  const [countdown, setCountdown] = useState(0);
+  const [bindChallenge, setBindChallenge] = useState<OtpBindChallenge | null>(null);
+  const [bindDone, setBindDone] = useState(false);
+
+  useEffect(() => {
+    if (countdown <= 0) return;
+    const timer = setTimeout(() => setCountdown((value) => value - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [countdown]);
+
+  const reset = () => {
+    setStudentId("");
+    setNewPassword("");
+    setConfirm("");
+    setEmailCode("");
+    setCountdown(0);
+  };
+
+  const sendCode = async () => {
+    const value = studentId.trim();
+    if (!value) return toast.error("请先填写学号");
+    if (!/^\d+$/.test(value)) return toast.error("学号只能包含数字");
+    setSendingCode(true);
+    try {
+      const result = await sendForgotPasswordCode(value);
+      if (result.success) {
+        toast.success(result.message || "验证码已发送");
+        setCountdown(CODE_COUNTDOWN_SECONDS);
+      } else {
+        toast.error(result.message || "发送失败");
+      }
+    } catch (error) {
+      toast.error(errorMessage(error, "发送失败"));
+    } finally {
+      setSendingCode(false);
+    }
+  };
 
   const submit = async () => {
     const value = studentId.trim();
     if (!value) return toast.error("请输入学号");
     if (!/^\d+$/.test(value)) return toast.error("学号只能包含数字");
+    if (!newPassword) return toast.error("请设置新密码");
+    if (newPassword.length < 6) return toast.error("新密码至少需要6位字符");
+    if (newPassword !== confirm) return toast.error("两次输入的密码不一致");
+    if (!emailCode.trim()) return toast.error("请输入邮箱验证码");
 
     setSubmitting(true);
     try {
-      const result = await forgotPassword(value);
+      const result = await forgotPassword(value, newPassword, emailCode.trim());
       if (result.success) {
-        toast.success(result.message || "重置邮件已发送");
+        toast.success(result.message || "密码已重置");
         onOpenChange(false);
-        setStudentId("");
-      } else if (result.already_requested) {
-        toast.warning(result.message);
+        reset();
+        // 与注册一致：成功后可选立即重绑 OTP；跳过则原有 OTP 保持不变
+        if (result.otp_bind) setBindChallenge(result.otp_bind);
       } else {
         toast.error(result.message || "操作失败");
       }
@@ -424,29 +507,99 @@ function ForgotPasswordDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent title="忘记密码" className="max-w-[400px]">
-        <p className="text-[13px] text-[#666] -mt-2 mb-4 leading-relaxed">
-          请输入您的学号，系统将发送新密码到您的邮箱
-        </p>
-        <Field label="学号">
-          <Input
-            value={studentId}
-            onChange={(event) => setStudentId(event.target.value)}
-            placeholder="请输入学号"
-            pattern="[0-9]*"
-            inputMode="numeric"
-          />
-        </Field>
-        <div className="flex gap-3 mt-5">
-          <Button className="flex-1" onClick={submit} disabled={submitting}>
-            {submitting ? "发送中..." : "发送重置邮件"}
-          </Button>
-          <Button variant="secondary" className="flex-1" onClick={() => onOpenChange(false)}>
-            取消
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent title="忘记密码" className="max-w-[420px]">
+          <p className="text-[13px] text-[#666] -mt-2 mb-4 leading-relaxed">
+            通过学号邮箱验证码验证身份后，即可设置新密码
+          </p>
+          <Field label="学号" required>
+            <Input
+              value={studentId}
+              onChange={(event) => setStudentId(event.target.value)}
+              placeholder="请输入学号"
+              pattern="[0-9]*"
+              inputMode="numeric"
+            />
+          </Field>
+          <Field label="新密码" required>
+            <Input
+              type="password"
+              value={newPassword}
+              onChange={(event) => setNewPassword(event.target.value)}
+              placeholder="至少6位字符"
+              autoComplete="new-password"
+            />
+          </Field>
+          <Field label="确认新密码" required>
+            <Input
+              type="password"
+              value={confirm}
+              onChange={(event) => setConfirm(event.target.value)}
+              placeholder="请再次输入新密码"
+              autoComplete="new-password"
+            />
+          </Field>
+          <Field label="邮箱验证码" required>
+            <div className="flex gap-2">
+              <Input
+                value={emailCode}
+                onChange={(event) => setEmailCode(event.target.value)}
+                placeholder="学号邮箱收到的6位验证码"
+                inputMode="numeric"
+                maxLength={6}
+                className="flex-1"
+              />
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={sendCode}
+                disabled={sendingCode || countdown > 0}
+                className="shrink-0"
+              >
+                {countdown > 0 ? `${countdown}s后重发` : sendingCode ? "发送中..." : "发送验证码"}
+              </Button>
+            </div>
+          </Field>
+          <div className="flex gap-3 mt-5">
+            <Button className="flex-1" onClick={submit} disabled={submitting}>
+              {submitting ? "提交中..." : "重置密码"}
+            </Button>
+            <Button variant="secondary" className="flex-1" onClick={() => onOpenChange(false)}>
+              取消
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+      <OtpBundleDialog
+        bundle={bindChallenge}
+        title="密码已重置：重新绑定动态验证码"
+        onOpenChange={(isOpen) => {
+          if (isOpen) return;
+          if (!bindDone) toast.info("已跳过 OTP 重绑，原有动态验证码保持不变");
+          setBindChallenge(null);
+          setBindDone(false);
+        }}
+        activation={{
+          type: "verify",
+          onVerify: async (code) => {
+            if (!bindChallenge) return false;
+            try {
+              const result = await confirmOtpBind(bindChallenge.ticket, code);
+              if (result.success) {
+                toast.success("动态验证码已重新绑定");
+                setBindDone(true);
+                return true;
+              }
+              toast.error(result.message || "验证失败");
+              return false;
+            } catch (error) {
+              toast.error(errorMessage(error, "验证失败"));
+              return false;
+            }
+          },
+        }}
+      />
+    </>
   );
 }

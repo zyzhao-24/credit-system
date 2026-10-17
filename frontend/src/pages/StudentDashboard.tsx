@@ -3,11 +3,17 @@ import { Link, useNavigate } from "react-router";
 import { toast } from "sonner";
 import { ClipboardList, FileDown, FileText } from "lucide-react";
 import { errorMessage } from "@/api/client";
-import { changeStudentPassword, getMyCredits, getStudentActivities } from "@/api/service";
+import {
+  beginStudentOtpReset,
+  changeStudentPassword,
+  confirmOtpBind,
+  getMyCredits,
+  getStudentActivities,
+} from "@/api/service";
 import { sha256Hex } from "@/lib/sha256";
 import { printCreditReport } from "@/lib/printReport";
 import { useAuth } from "@/auth/auth-context";
-import type { CreditReport, StudentActivities } from "@/api/types";
+import type { CreditReport, OtpBindChallenge, StudentActivities } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -21,10 +27,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { PageHeader } from "@/components/PageHeader";
+import { OtpBundleDialog } from "@/components/OtpBundleDialog";
 import { Field } from "@/components/common";
 import { QualifiedBadge } from "@/components/StatusBadge";
 
-/** 学生主页：我的学分、活动列表、修改密码、导出 PDF。 */
+/** 学生主页：我的学分、活动列表、账号安全（密码/OTP）、导出 PDF。 */
 export function StudentDashboard() {
   const { logout } = useAuth();
   const navigate = useNavigate();
@@ -70,7 +77,7 @@ export function StudentDashboard() {
           <TabsTrigger value="activities" onClick={loadActivities}>
             活动列表
           </TabsTrigger>
-          <TabsTrigger value="password">修改密码</TabsTrigger>
+          <TabsTrigger value="password">账号安全</TabsTrigger>
           <TabsTrigger value="__questionnaire" asChild>
             <Link to="/student/profile" className="text-success">
               <span className="inline-flex items-center gap-1">
@@ -98,12 +105,15 @@ export function StudentDashboard() {
         </TabsContent>
 
         <TabsContent value="password">
-          <ChangePasswordCard
-            onChanged={async () => {
-              await logout();
-              navigate("/login");
-            }}
-          />
+          <div className="grid gap-6 md:grid-cols-2 items-start">
+            <ChangePasswordCard
+              onChanged={async () => {
+                await logout();
+                navigate("/login");
+              }}
+            />
+            <ChangeOtpCard />
+          </div>
         </TabsContent>
       </Tabs>
     </div>
@@ -312,6 +322,72 @@ function ChangePasswordCard({ onChanged }: { onChanged: () => Promise<void> }) {
       <Button onClick={submit} disabled={submitting}>
         {submitting ? "提交中..." : "修改密码"}
       </Button>
+    </Card>
+  );
+}
+
+/** 学生主动重置 OTP：弹出新二维码，输入验证码确认后才生效，放弃则原 OTP 不变。 */
+function ChangeOtpCard() {
+  const [challenge, setChallenge] = useState<OtpBindChallenge | null>(null);
+  const [done, setDone] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  const begin = async () => {
+    setLoading(true);
+    try {
+      const result = await beginStudentOtpReset();
+      if (result.success && result.otp_bind) {
+        setDone(false);
+        setChallenge(result.otp_bind);
+      } else {
+        toast.error(result.message || "生成二维码失败");
+      }
+    } catch (error) {
+      toast.error(errorMessage(error, "生成二维码失败"));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Card className="max-w-md">
+      <CardTitle>修改动态验证码</CardTitle>
+      <p className="text-[13px] text-[#616161] leading-relaxed mb-4">
+        登录时除密码外还需输入验证器中的 6 位动态验证码。更换手机或验证器应用时，
+        可在此重新绑定：扫描新二维码并输入验证码确认后生效，中途放弃则原有验证码保持不变。
+      </p>
+      <Button variant="secondary" onClick={begin} disabled={loading}>
+        {loading ? "生成中..." : "重新绑定动态验证码"}
+      </Button>
+      <OtpBundleDialog
+        bundle={challenge}
+        title="重新绑定动态验证码"
+        onOpenChange={(open) => {
+          if (open) return;
+          if (!done) toast.info("已取消，原有动态验证码保持不变");
+          setChallenge(null);
+          setDone(false);
+        }}
+        activation={{
+          type: "verify",
+          onVerify: async (code) => {
+            if (!challenge) return false;
+            try {
+              const result = await confirmOtpBind(challenge.ticket, code);
+              if (result.success) {
+                toast.success("动态验证码已更新，下次登录请使用新验证码");
+                setDone(true);
+                return true;
+              }
+              toast.error(result.message || "验证失败");
+              return false;
+            } catch (error) {
+              toast.error(errorMessage(error, "验证失败"));
+              return false;
+            }
+          },
+        }}
+      />
     </Card>
   );
 }

@@ -1,8 +1,13 @@
-"""SMTP email service with legacy server inference behavior."""
+"""SMTP email service with legacy server inference behavior.
+
+All outbound mail carries a styled HTML layout (multipart/alternative with a
+plain-text fallback); OTP QR codes are embedded as inline Content-ID images.
+"""
 
 from __future__ import annotations
 
 import smtplib
+from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email.mime.text import MIMEText
@@ -13,6 +18,7 @@ from flask import current_app
 
 from backend.extensions import db
 from backend.models import EmailConfig
+from backend.services import mail_templates
 from backend.utils.crypto import decrypt_secret
 
 
@@ -42,11 +48,55 @@ def get_email_config() -> tuple[EmailConfig | None, str]:
     return config, password
 
 
+def _build_message(
+    to_email: str,
+    subject: str,
+    body: str,
+    html: str | None,
+    inline_images: list[tuple[str, bytes, str]] | None,
+    attachments: list[tuple[str, bytes, str]] | None,
+    from_email: str,
+):
+    """Assemble the MIME tree: mixed > related > alternative(text, html) + inline images."""
+    if html is None and not inline_images:
+        message = MIMEMultipart()
+        message.attach(MIMEText(body, "plain", "utf-8"))
+    else:
+        message = MIMEMultipart("mixed") if attachments else MIMEMultipart("related")
+        related = message if not attachments else MIMEMultipart("related")
+        alternative = MIMEMultipart("alternative")
+        alternative.attach(MIMEText(body, "plain", "utf-8"))
+        alternative.attach(MIMEText(html or "", "html", "utf-8"))
+        related.attach(alternative)
+        for cid, content, mime_type in inline_images or []:
+            _maintype, subtype = mime_type.split("/", 1)
+            image = MIMEImage(content, _subtype=subtype)
+            image.add_header("Content-ID", f"<{cid}>")
+            image.add_header("Content-Disposition", "inline", filename=f"{cid}.png")
+            related.attach(image)
+        if attachments:
+            message.attach(related)
+
+    message["From"] = from_email
+    message["To"] = to_email
+    message["Subject"] = subject
+    for filename, content, mime_type in attachments or []:
+        maintype, subtype = mime_type.split("/", 1)
+        part = MIMEBase(maintype, subtype)
+        part.set_payload(content)
+        encoders.encode_base64(part)
+        part.add_header("Content-Disposition", "attachment", filename=filename)
+        message.attach(part)
+    return message
+
+
 def send_email(
     to_email: str,
     subject: str,
     body: str,
     attachments: list[tuple[str, bytes, str]] | None = None,
+    html: str | None = None,
+    inline_images: list[tuple[str, bytes, str]] | None = None,
 ) -> tuple[bool, str]:
     config, password = get_email_config()
     if config is None or not config.service_email or not password:
@@ -54,18 +104,9 @@ def send_email(
 
     profile = smtp_profile(config.service_email)
     try:
-        message = MIMEMultipart()
-        message["From"] = config.service_email
-        message["To"] = to_email
-        message["Subject"] = subject
-        message.attach(MIMEText(body, "plain", "utf-8"))
-        for filename, content, mime_type in attachments or []:
-            maintype, subtype = mime_type.split("/", 1)
-            part = MIMEBase(maintype, subtype)
-            part.set_payload(content)
-            encoders.encode_base64(part)
-            part.add_header("Content-Disposition", "attachment", filename=filename)
-            message.attach(part)
+        message = _build_message(
+            to_email, subject, body, html, inline_images, attachments, config.service_email
+        )
 
         if profile["ssl"]:
             server = smtplib.SMTP_SSL(profile["server"], profile["port"], timeout=15)
@@ -115,7 +156,12 @@ def send_test_email(to_email: str, debug: bool = False) -> tuple[bool, str, list
 
 ---
 团校积分系统"""
-    success, message = send_email(to_email, "团校积分系统 - 邮箱配置测试", body)
+    html = mail_templates.render_mail_html(
+        "邮箱配置测试",
+        mail_templates.paragraph("这是一封测试邮件。")
+        + mail_templates.paragraph("如果您收到这封邮件，说明邮箱配置成功！"),
+    )
+    success, message = send_email(to_email, "团校积分系统 - 邮箱配置测试", body, html=html)
     if debug:
         debug_info.append("✓ 邮件发送成功！" if success else f"✗ {message}")
     return success, message if success else message, debug_info if debug else None

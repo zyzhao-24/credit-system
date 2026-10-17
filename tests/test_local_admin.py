@@ -36,6 +36,8 @@ def test_console_requires_signed_form_token(app, database):
 
 
 def test_console_reset_password_and_otp(app, database):
+    import pyotp
+
     client = app.test_client()
     # create_app 保证 system 账号存在
     admin = database.session.get(Admin, "system")
@@ -50,11 +52,38 @@ def test_console_reset_password_and_otp(app, database):
     database.session.refresh(admin)
     assert verify_password_digest(admin.password_hash, client_password_digest(new_password))
 
+    # OTP 第一步：生成候选二维码但不生效
     token = _form_token(client)
     otp = client.post("/local/system/reset-otp", data={"form_token": token})
     assert otp.status_code == 200
-    html = otp.get_data(as_text=True)
-    assert "data:image/png;base64," in html
+    page = otp.get_data(as_text=True)
+    assert "data:image/png;base64," in page
+    database.session.refresh(admin)
+    assert not has_totp(admin)  # 确认前保持未绑定
+
+    ticket = re.search(r'bind_ticket" value="([^"]+)"', page).group(1)
+    candidate = re.search(r'<span class="secret">([^<]+)</span>', page).group(1)
+    confirm_token = TOKEN_PATTERN.search(page).group(1)
+
+    # 错误验证码不生效
+    bad = client.post(
+        "/local/system/reset-otp/confirm",
+        data={"form_token": confirm_token, "bind_ticket": ticket, "otp_code": "000000"},
+    )
+    assert bad.status_code == 400
+    database.session.refresh(admin)
+    assert not has_totp(admin)
+
+    # 正确验证码确认后才生效
+    ok = client.post(
+        "/local/system/reset-otp/confirm",
+        data={
+            "form_token": confirm_token,
+            "bind_ticket": ticket,
+            "otp_code": pyotp.TOTP(candidate).now(),
+        },
+    )
+    assert ok.status_code == 200
     database.session.refresh(admin)
     assert has_totp(admin)
 

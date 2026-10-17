@@ -12,7 +12,12 @@ class TokenError(Exception):
     """Base class for token validation failures."""
 
 
-def issue_token(identity: dict[str, Any], secret_key: str, expires_seconds: int) -> str:
+def issue_token(
+    identity: dict[str, Any],
+    secret_key: str,
+    expires_seconds: int,
+    extra: dict[str, Any] | None = None,
+) -> str:
     now = datetime.now(timezone.utc)
     claims = {
         "sub": identity["id"],
@@ -22,6 +27,7 @@ def issue_token(identity: dict[str, Any], secret_key: str, expires_seconds: int)
         "name": identity.get("name", ""),
         "iat": now,
         "exp": now + timedelta(seconds=expires_seconds),
+        **(extra or {}),
     }
     return jwt.encode(claims, secret_key, algorithm="HS256")
 

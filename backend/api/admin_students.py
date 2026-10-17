@@ -11,10 +11,9 @@ from backend.extensions import db
 from backend.models import Student
 from backend.services.exporters import csv_file_response
 from backend.services.legacy_import import DATETIME_FORMAT
-from backend.services.otp_service import bind_new_totp, has_totp
+from backend.services.otp_service import clear_totp, has_totp
 from backend.services.ranking import format_datetime
 from backend.services.students import PHONE_PATTERN, create_student, delete_student_account
-from backend.utils.otp import qr_png_data_uri
 from backend.utils.passwords import client_password_digest, hash_password_digest
 
 
@@ -233,19 +232,20 @@ def export_student_infos():
 @admin_students_bp.post("/api/admin/students/reset_otp")
 @require_system_admin
 def reset_student_otp():
-    """重新生成学生的 OTP，二维码/密钥一次性返回给管理员转交（不发邮件）。"""
+    """将学生的 OTP 置为未绑定状态（立即生效，不发邮件、不生成新密钥）。
+
+    学生下次登录时密码通过后，系统会自动重新生成 OTP 并把二维码发到其邮箱。
+    """
     data = request.get_json(silent=True) or {}
     student_id = data.get("student_id", "").strip()
     student = db.session.get(Student, student_id)
     if student is None:
         return _error("学生不存在")
-    secret, uri = bind_new_totp(student)
+    clear_totp(student)
     db.session.commit()
     return jsonify(
         {
             "success": True,
-            "otp_secret": secret,
-            "otp_uri": uri,
-            "otp_qr": qr_png_data_uri(uri),
+            "message": "已将该学生的动态验证码置为未绑定，其下次登录时会自动通过邮箱重新绑定",
         }
     )

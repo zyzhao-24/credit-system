@@ -19,17 +19,22 @@ from flask import Blueprint, current_app, g, jsonify, request
 from backend.auth.decorators import require_auth, require_admin
 from backend.auth.jwt import decode_token, issue_token
 from backend.extensions import db
-from backend.models import Admin, EmailConfig, EmailVerification, Student
+from backend.models import Admin, EmailVerification, Student
+from backend.services import mail_templates
 from backend.services.emailer import send_email
 from backend.services.otp_service import (
     bind_new_totp,
+    begin_pending_otp,
     check_totp,
+    confirm_pending_otp,
+    decode_pending_otp,
     has_totp,
+    pending_otp_bundle,
     send_totp_binding_email,
+    set_totp_secret,
     student_email_address,
 )
 from backend.services.students import PHONE_PATTERN, create_student
-from backend.utils.crypto import encrypt_secret
 from backend.utils.passwords import (
     client_password_digest,
     hash_password_digest,
@@ -283,11 +288,11 @@ def _code_send_limited(key: str) -> bool:
     return False
 
 
-def _verification_email_body(name: str, code: str) -> str:
-    return f"""
+def _verification_email_bodies(name: str, code: str, scene: str) -> tuple[str, str]:
+    plain = f"""
 您好，{name} 同学：
 
-您正在注册团校积分系统，邮箱验证码为：
+您正在{scene}团校积分系统账号，邮箱验证码为：
 
     {code}
 
@@ -298,6 +303,37 @@ def _verification_email_body(name: str, code: str) -> str:
 ---
 团校积分系统
 """
+    html = mail_templates.render_mail_html(
+        f"{scene}验证码",
+        mail_templates.greeting(name)
+        + mail_templates.paragraph(f"您正在{scene}团校积分系统账号，邮箱验证码为：")
+        + mail_templates.code_block(code)
+        + mail_templates.hint(f"验证码 {_VERIFY_CODE_TTL_MINUTES} 分钟内有效，请勿泄露给他人。"),
+    )
+    return plain, html
+
+
+def _send_email_code(student_id: str, name: str, scene: str) -> tuple[bool, str]:
+    """向学号邮箱发送6位验证码并落库（注册/忘记密码共用）。"""
+    address, error = student_email_address(student_id)
+    if address is None:
+        return False, error
+    code = f"{secrets.randbelow(1000000):06d}"
+    plain, html = _verification_email_bodies(name, code, scene)
+    success, message = send_email(address, f"团校积分系统 - {scene}验证码", plain, html=html)
+    if not success:
+        return False, message
+
+    verification = db.session.get(EmailVerification, student_id)
+    if verification is None:
+        verification = EmailVerification(student_id=student_id, created_at=datetime.now())
+        db.session.add(verification)
+    verification.code_hash = hash_password_digest(code)
+    verification.expires_at = datetime.now() + timedelta(minutes=_VERIFY_CODE_TTL_MINUTES)
+    verification.attempts = 0
+    verification.created_at = datetime.now()
+    db.session.commit()
+    return True, f"验证码已发送至 {address}，{_VERIFY_CODE_TTL_MINUTES}分钟内有效"
 
 
 @auth_bp.post("/api/student/register/send_code")
@@ -313,29 +349,14 @@ def send_registration_code():
     if db.session.get(Student, student_id):
         return _json_error("该学号已注册，请直接登录")
 
-    rate_key = f"{student_id}:{request.remote_addr or 'unknown'}"
+    rate_key = f"register:{student_id}:{request.remote_addr or 'unknown'}"
     if _code_send_limited(rate_key):
         return _json_error("验证码请求过于频繁，请稍后再试", 429)
 
-    address, error = student_email_address(student_id)
-    if address is None:
-        return _json_error(error)
-
-    code = f"{secrets.randbelow(1000000):06d}"
-    success, message = send_email(address, "团校积分系统 - 注册验证码", _verification_email_body(name, code))
+    success, message = _send_email_code(student_id, name, "注册")
     if not success:
         return _json_error(message)
-
-    verification = db.session.get(EmailVerification, student_id)
-    if verification is None:
-        verification = EmailVerification(student_id=student_id, created_at=datetime.now())
-        db.session.add(verification)
-    verification.code_hash = hash_password_digest(code)
-    verification.expires_at = datetime.now() + timedelta(minutes=_VERIFY_CODE_TTL_MINUTES)
-    verification.attempts = 0
-    verification.created_at = datetime.now()
-    db.session.commit()
-    return jsonify({"success": True, "message": f"验证码已发送至 {address}，{_VERIFY_CODE_TTL_MINUTES}分钟内有效"})
+    return jsonify({"success": True, "message": message})
 
 
 def _check_registration_code(student_id: str, code: str) -> str | None:
@@ -397,26 +418,54 @@ def student_register():
         student.wechat = wechat
         student.suggestion = suggestion
         student.info_updated_at = datetime.now()
-        secret, _uri = bind_new_totp(student)
         db.session.commit()
     except Exception:
         db.session.rollback()
         raise
 
-    success, message = send_totp_binding_email(student, secret)
-    if not success:
-        return jsonify(
-            {
-                "success": True,
-                "message": f"注册成功！但OTP绑定邮件发送失败（{message}），请联系管理员协助绑定",
-            }
-        )
+    # 注册成功后再绑定 OTP：候选密钥随响应一次性返回，学生在弹窗中扫码并
+    # 输入验证码确认后才真正生效；中途放弃则保持未绑定（首次登录时自动补发邮件）。
+    ticket, candidate = begin_pending_otp(student, "student", "register_bind")
     return jsonify(
         {
             "success": True,
-            "message": "注册成功！动态验证码绑定二维码已发送至您的学号邮箱，请扫码绑定后登录",
+            "message": "注册成功！请立即绑定动态验证码（OTP）",
+            "otp_bind": pending_otp_bundle(ticket, candidate, student_id),
         }
     )
+
+
+@auth_bp.post("/api/auth/otp/bind/confirm")
+def confirm_otp_bind():
+    """Confirm a pending OTP bind/reset: the new secret takes effect only when
+    the returned 6-digit code proves the candidate secret was actually scanned."""
+    data = request.get_json(silent=True) or {}
+    ticket = data.get("ticket", "").strip()
+    code = data.get("otp_code", "").strip()
+    if not ticket or not code:
+        return _json_error("请输入动态验证码")
+
+    claims, error = decode_pending_otp(ticket)
+    if claims is None:
+        return _json_error(error, 401)
+
+    user_type = claims.get("user_type", "")
+    if user_type not in {"student", "admin"}:
+        return _json_error("无效的绑定请求", 401)
+    account = _load_account(user_type, claims.get("sub", ""))
+    if account is None:
+        return _json_error("账号不存在", 401)
+
+    if not confirm_pending_otp(account, claims, code):
+        return _json_error("验证码错误，请确认已用验证器扫描最新二维码后重试")
+
+    try:
+        set_totp_secret(account, claims["candidate_secret"])
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        raise
+    return jsonify({"success": True, "message": "动态验证码绑定成功"})
 
 
 def _reset_rate_limited(key: str) -> bool:
@@ -431,15 +480,16 @@ def _reset_rate_limited(key: str) -> bool:
     return False
 
 
-@auth_bp.post("/api/student/forgot_password")
-def forgot_password():
+@auth_bp.post("/api/student/forgot_password/send_code")
+def send_forgot_password_code():
+    """忘记密码第一步：向学号邮箱发送验证码（与注册同构）。"""
     data = request.get_json(silent=True) or {}
     student_id = data.get("student_id", "").strip()
-    generic_message = "如果学号存在，重置密码邮件将发送到对应学生邮箱"
+    generic_message = "如果学号存在，验证码邮件将发送到对应学生邮箱"
 
     if not student_id:
         return _json_error(generic_message)
-    rate_key = f"{student_id}:{request.remote_addr or 'unknown'}"
+    rate_key = f"forgot:{student_id}:{request.remote_addr or 'unknown'}"
     if _reset_rate_limited(rate_key):
         return _json_error("请求过于频繁，请稍后再试", 429)
 
@@ -447,53 +497,60 @@ def forgot_password():
     if student is None:
         # Generic response avoids student-ID enumeration.
         return jsonify({"success": True, "message": generic_message})
-    if student.password_reset_required:
-        return jsonify(
-            {
-                "success": False,
-                "message": "您已申请过密码重置，新密码已发送到您的邮箱。\n请查收邮件并使用新密码登录。\n如未收到邮件，请联系管理员。",
-                "already_requested": True,
-            }
-        )
 
-    config = db.session.get(EmailConfig, 1)
-    if not config or not config.service_email or not config.student_email_suffix:
-        return _json_error("系统邮箱未配置，请联系管理员")
-
-    new_password = secrets.token_urlsafe(8)[:8]
-    student_email = f"{student_id}{config.student_email_suffix}"
-    # 重置密码的同时重新生成 OTP，并连同二维码一起发送（找回设备通道）
-    secret, _uri = bind_new_totp(student)
-    from backend.utils.otp import provisioning_uri, qr_png_bytes
-
-    qr_png = qr_png_bytes(provisioning_uri(secret, student_id))
-    body = f"""
-您好，{student.name} 同学：
-
-您的团校积分系统密码已重置，动态验证码（OTP）也已重新生成。
-
-学号：{student_id}
-新密码：{new_password}
-OTP密钥：{secret}
-
-请使用新密码登录系统；登录时需输入验证器中的6位动态验证码，
-可扫描附件二维码或手动输入上方密钥完成绑定。
-
-如非本人操作，请立即联系管理员。
-
----
-团校积分系统
-    """
-    success, message = send_email(
-        student_email,
-        "团校积分系统 - 密码与动态验证码重置",
-        body,
-        attachments=[("otp-qrcode.png", qr_png, "image/png")],
-    )
+    success, message = _send_email_code(student_id, student.name, "重置密码")
     if not success:
         return _json_error(message)
+    return jsonify({"success": True, "message": message})
 
-    student.password_hash = hash_password_digest(client_password_digest(new_password))
-    student.password_reset_required = True
-    db.session.commit()
-    return jsonify({"success": True, "message": f"新密码与OTP二维码已发送至 {student_email}，请查收邮件"})
+
+@auth_bp.post("/api/student/forgot_password")
+def forgot_password():
+    """忘记密码第二步：邮箱验证码 + 自设新密码，验证通过才重置。
+
+    成功后返回一次性 OTP 绑定票据（与注册一致）：学生在弹窗中扫码并输入
+    验证码确认后新 OTP 才生效；跳过则原有 OTP 保持不变。
+    """
+    data = request.get_json(silent=True) or {}
+    student_id = data.get("student_id", "").strip()
+    new_password = data.get("new_password", "")
+    password_digest = data.get("password_hash", "").strip().lower()
+    email_code = data.get("email_code", "").strip()
+
+    if not student_id:
+        return _json_error("请输入学号")
+    if not (new_password or password_digest):
+        return _json_error("请设置新密码")
+    if new_password and len(new_password) < 6:
+        return _json_error("新密码至少需要6位字符")
+    if password_digest and not PASSWORD_DIGEST_PATTERN.fullmatch(password_digest):
+        return _json_error("密码格式不正确")
+    if not email_code:
+        return _json_error("请输入邮箱验证码")
+
+    student = db.session.get(Student, student_id)
+    if student is None:
+        return _json_error("学号不存在")
+
+    code_error = _check_registration_code(student_id, email_code)
+    if code_error:
+        return _json_error(code_error)
+
+    try:
+        student.password_hash = hash_password_digest(
+            password_digest or client_password_digest(new_password)
+        )
+        student.password_reset_required = False
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        raise
+
+    ticket, candidate = begin_pending_otp(student, "student", "student_reset")
+    return jsonify(
+        {
+            "success": True,
+            "message": "密码已重置！可选择立即重新绑定动态验证码（OTP）",
+            "otp_bind": pending_otp_bundle(ticket, candidate, student_id),
+        }
+    )

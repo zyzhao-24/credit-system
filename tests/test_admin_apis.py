@@ -1,12 +1,14 @@
 """Administration API and authorization regression tests."""
 
+from backend.models import Admin, Student
+from backend.services.otp_service import has_totp
 from backend.utils.passwords import client_password_digest
 
 
 def test_student_list_and_otp_reset_for_system_admin(
     app, database, seed_legacy_payload, minimal_payload, login
 ):
-    """学生列表对系统管理员附带联系方式与 OTP 状态；可重置学生 OTP（不发邮件）。"""
+    """学生列表对系统管理员附带联系方式与 OTP 状态；重置学生 OTP = 置为未绑定。"""
     seed_legacy_payload(minimal_payload)
     client = app.test_client()
     system = login("system", "adminpass", "admin")
@@ -21,7 +23,12 @@ def test_student_list_and_otp_reset_for_system_admin(
     limited = client.get("/api/admin/students", headers={"Authorization": normal}).get_json()
     assert all("phone" not in s for s in limited["students"])
 
-    # 重置学生 OTP：一次性返回二维码与密钥
+    # 先让学生绑定 OTP（登录第一步自动绑定，邮件打桩）
+    login("1001", "pass123", "student")
+    bound = client.get("/api/admin/students", headers={"Authorization": system}).get_json()
+    assert next(s for s in bound["students"] if s["student_id"] == "1001")["has_otp"] is True
+
+    # 系统管理员重置学生 OTP：置为未绑定，不返回二维码、不发邮件
     reset = client.post(
         "/api/admin/students/reset_otp",
         json={"student_id": "1001"},
@@ -29,8 +36,10 @@ def test_student_list_and_otp_reset_for_system_admin(
     )
     payload = reset.get_json()
     assert payload["success"] is True
-    assert payload["otp_secret"]
-    assert payload["otp_qr"].startswith("data:image/png;base64,")
+    assert "otp_qr" not in payload
+    student = database.session.get(Student, "1001")
+    database.session.refresh(student)
+    assert not has_totp(student)
 
     # 普通管理员无权重置
     denied = client.post(
@@ -39,6 +48,59 @@ def test_student_list_and_otp_reset_for_system_admin(
         headers={"Authorization": normal},
     )
     assert denied.status_code == 403
+
+
+def test_admin_otp_reset_takes_effect_only_after_confirm(
+    app, database, seed_legacy_payload, minimal_payload, login
+):
+    """系统管理员重置管理员 OTP：弹窗展示候选二维码，二次确认后才写入。"""
+    from backend.services.otp_service import get_totp_secret
+
+    seed_legacy_payload(minimal_payload)
+    client = app.test_client()
+    token = login("system", "adminpass", "admin")
+    login("admin", "adminpass", "admin")  # 让 admin 先绑定 OTP
+    admin = database.session.get(Admin, "admin")
+    old_otp = get_totp_secret(admin)
+    assert old_otp
+
+    begin = client.post(
+        "/api/admin/admins/reset_otp",
+        json={"admin_id": "admin"},
+        headers={"Authorization": token},
+    )
+    payload = begin.get_json()
+    assert payload["success"] is True
+    assert payload["ticket"] and payload["otp_qr"].startswith("data:image/png")
+    database.session.refresh(admin)
+    assert get_totp_secret(admin) == old_otp  # 确认前不变
+
+    confirmed = client.post(
+        "/api/admin/admins/reset_otp/confirm",
+        json={"ticket": payload["ticket"]},
+        headers={"Authorization": token},
+    )
+    assert confirmed.get_json()["success"] is True
+    database.session.refresh(admin)
+    assert get_totp_secret(admin) == payload["otp_secret"] != old_otp
+
+    # 普通管理员无权发起
+    normal = login("admin", "adminpass", "admin")
+    assert (
+        client.post(
+            "/api/admin/admins/reset_otp",
+            json={"admin_id": "admin"},
+            headers={"Authorization": normal},
+        ).status_code
+        == 403
+    )
+    # system 账号只能走本机维护页
+    builtin = client.post(
+        "/api/admin/admins/reset_otp",
+        json={"admin_id": "system"},
+        headers={"Authorization": token},
+    )
+    assert builtin.get_json()["success"] is False
 
 
 def test_system_admin_role_is_reserved_for_builtin_account(

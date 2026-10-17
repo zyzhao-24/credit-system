@@ -1,41 +1,151 @@
+import { useState } from "react";
+import { toast } from "sonner";
+import { Download, Copy } from "lucide-react";
 import type { AdminOtpBundle } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Field } from "@/components/common";
 
-/** 创建/重置 OTP 后一次性展示二维码与密钥，关闭后无法再次查看。 */
+const OTP_PATTERN = /^\d{6}$/;
+
+type Activation =
+  | { type: "verify"; onVerify: (code: string) => Promise<boolean> }
+  | { type: "confirm"; onConfirm: () => Promise<boolean> };
+
+/** OTP 二维码弹窗。
+ *  - 默认仅展示（创建管理员后转交二维码）；
+ *  - activation=verify：扫码后输入验证码，验证通过才生效（注册/学生自助重置）；
+ *  - activation=confirm：系统管理员二次确认后才生效（重置管理员 OTP）。
+ *  关闭弹窗即放弃，候选密钥不会生效。 */
 export function OtpBundleDialog({
   bundle,
   onOpenChange,
+  activation,
+  title = "绑定动态验证码（OTP）",
 }: {
   bundle: AdminOtpBundle | null;
   onOpenChange: (open: boolean) => void;
+  activation?: Activation;
+  title?: string;
 }) {
   return (
     <Dialog open={bundle !== null} onOpenChange={onOpenChange}>
-      <DialogContent title="绑定动态验证码（OTP）" className="max-w-[420px]">
+      <DialogContent title={title} className="max-w-[420px]">
         {bundle ? (
-          <>
-            <p className="text-[13px] text-danger -mt-2 mb-3 leading-relaxed">
-              ⚠️ 此二维码与密钥仅显示这一次，请立即用验证器应用扫码绑定，或抄写密钥妥善保存。
-            </p>
-            <div className="flex justify-center mb-4">
-              <img
-                src={bundle.otp_qr}
-                alt="OTP 绑定二维码"
-                className="h-[220px] w-[220px] rounded-md border border-[#e0e0e0]"
-              />
-            </div>
-            <Field label="手动输入密钥">
-              <Input value={bundle.otp_secret} readOnly className="font-mono bg-[#f5f5f5]" />
-            </Field>
-            <Button className="w-full mt-2" onClick={() => onOpenChange(false)}>
-              我已完成绑定
-            </Button>
-          </>
+          <OtpBundleBody bundle={bundle} activation={activation} onOpenChange={onOpenChange} />
         ) : null}
       </DialogContent>
     </Dialog>
+  );
+}
+
+function OtpBundleBody({
+  bundle,
+  activation,
+  onOpenChange,
+}: {
+  bundle: AdminOtpBundle;
+  activation?: Activation;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const [code, setCode] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const copySecret = async () => {
+    try {
+      await navigator.clipboard.writeText(bundle.otp_secret);
+      toast.success("密钥已复制");
+    } catch {
+      toast.error("复制失败，请手动抄录");
+    }
+  };
+
+  const submit = async () => {
+    if (!activation) return;
+    setSubmitting(true);
+    try {
+      if (activation.type === "verify") {
+        if (!OTP_PATTERN.test(code.trim())) {
+          toast.error("请输入6位数字验证码");
+          return;
+        }
+        if (await activation.onVerify(code.trim())) onOpenChange(false);
+      } else {
+        if (await activation.onConfirm()) onOpenChange(false);
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <>
+      <p className="text-[13px] text-danger -mt-2 mb-3 leading-relaxed">
+        ⚠️ 此二维码与密钥仅显示这一次，请立即用验证器应用扫码绑定，或抄写密钥妥善保存。
+      </p>
+      <div className="flex justify-center mb-3">
+        <img
+          src={bundle.otp_qr}
+          alt="OTP 绑定二维码"
+          className="h-[220px] w-[220px] rounded-md border border-[#e0e0e0]"
+        />
+      </div>
+      <div className="flex justify-center gap-2 mb-4">
+        <a href={bundle.otp_qr} download="otp-qrcode.png">
+          <Button type="button" variant="secondary" size="sm">
+            <Download className="h-4 w-4" />
+            下载二维码
+          </Button>
+        </a>
+        <Button type="button" variant="secondary" size="sm" onClick={copySecret}>
+          <Copy className="h-4 w-4" />
+          复制密钥
+        </Button>
+      </div>
+      <Field label="手动输入密钥">
+        <Input value={bundle.otp_secret} readOnly className="font-mono bg-[#f5f5f5]" />
+      </Field>
+      {activation?.type === "verify" ? (
+        <>
+          <Field label="输入验证器中的 6 位验证码以完成绑定" required>
+            <Input
+              value={code}
+              onChange={(event) => setCode(event.target.value)}
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={6}
+              placeholder="6 位数字"
+              className="text-center tracking-[0.5em]"
+            />
+          </Field>
+          <Button className="w-full mt-2" onClick={submit} disabled={submitting}>
+            {submitting ? "验证中..." : "验证并绑定"}
+          </Button>
+          <p className="mt-2 text-center text-[12px] text-[#888]">
+            关闭本窗口即放弃绑定，动态验证码不会变更
+          </p>
+        </>
+      ) : activation?.type === "confirm" ? (
+        <>
+          <p className="text-[13px] text-[#616161] leading-relaxed">
+            请先将二维码转交给对应管理员完成扫码，然后点击下方按钮二次确认，
+            新验证码才会生效；取消则一切保持不变。
+          </p>
+          <div className="flex gap-3 mt-2">
+            <Button className="flex-1" onClick={submit} disabled={submitting}>
+              {submitting ? "生效中..." : "确认生效"}
+            </Button>
+            <Button variant="secondary" className="flex-1" onClick={() => onOpenChange(false)}>
+              取消
+            </Button>
+          </div>
+        </>
+      ) : (
+        <Button className="w-full mt-2" onClick={() => onOpenChange(false)}>
+          我已完成绑定
+        </Button>
+      )}
+    </>
   );
 }

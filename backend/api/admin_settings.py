@@ -8,7 +8,14 @@ from sqlalchemy import func
 from backend.auth.decorators import require_admin, require_system_admin
 from backend.extensions import db
 from backend.models import Activity, ActivityAllowedEditor, Admin, Category, Department, Setting
-from backend.services.otp_service import bind_new_totp, has_totp
+from backend.services.otp_service import (
+    begin_pending_otp,
+    bind_new_totp,
+    decode_pending_otp,
+    has_totp,
+    pending_otp_bundle,
+    set_totp_secret,
+)
 from backend.utils.otp import qr_png_data_uri
 from backend.utils.passwords import client_password_digest, hash_password_digest
 
@@ -227,21 +234,35 @@ def manage_admins():
 @admin_settings_bp.post("/api/admin/admins/reset_otp")
 @require_system_admin
 def reset_admin_otp():
-    """重新生成普通管理员的 OTP（system 账号只能走 manage.py）。"""
+    """第一步：生成管理员 OTP 候选密钥（不生效），二维码一次性返回给系统管理员。
+
+    系统管理员在弹窗中二次确认（或目标管理员当场扫码）后调用 confirm 才写入。
+    """
     data = request.get_json(silent=True) or {}
     admin_id = data.get("admin_id", "").strip()
     if admin_id == SYSTEM_ADMIN_ID:
-        return _error("system 账号的 OTP 只能通过 manage.py 重置")
+        return _error("system 账号的 OTP 只能在服务器本机 /local/system 重置")
     admin = db.session.get(Admin, admin_id)
     if admin is None:
         return _error("管理员不存在")
-    secret, uri = bind_new_totp(admin)
+    ticket, candidate = begin_pending_otp(admin, "admin", "admin_reset")
+    return jsonify({"success": True, **pending_otp_bundle(ticket, candidate, admin_id)})
+
+
+@admin_settings_bp.post("/api/admin/admins/reset_otp/confirm")
+@require_system_admin
+def confirm_reset_admin_otp():
+    """第二步：系统管理员二次确认后，候选 OTP 才写入目标管理员账号。"""
+    data = request.get_json(silent=True) or {}
+    ticket = data.get("ticket", "").strip()
+    claims, error = decode_pending_otp(ticket)
+    if claims is None:
+        return _error(error, 401)
+    if claims.get("purpose") != "admin_reset" or claims.get("user_type") != "admin":
+        return _error("无效的重置请求", 401)
+    admin = db.session.get(Admin, claims.get("sub", ""))
+    if admin is None:
+        return _error("管理员不存在")
+    set_totp_secret(admin, claims["candidate_secret"])
     db.session.commit()
-    return jsonify(
-        {
-            "success": True,
-            "otp_secret": secret,
-            "otp_uri": uri,
-            "otp_qr": qr_png_data_uri(uri),
-        }
-    )
+    return jsonify({"success": True, "message": "动态验证码已生效"})
