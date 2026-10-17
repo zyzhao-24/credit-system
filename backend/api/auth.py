@@ -19,7 +19,7 @@ from flask import Blueprint, current_app, g, jsonify, request
 from backend.auth.decorators import require_auth, require_admin
 from backend.auth.jwt import decode_token, issue_token
 from backend.extensions import db
-from backend.models import Admin, EmailConfig, EmailVerification, RegistrationQuestionnaire, Student
+from backend.models import Admin, EmailConfig, EmailVerification, Student
 from backend.services.emailer import send_email
 from backend.services.otp_service import (
     bind_new_totp,
@@ -28,12 +28,7 @@ from backend.services.otp_service import (
     send_totp_binding_email,
     student_email_address,
 )
-from backend.services.students import (
-    PHONE_PATTERN,
-    create_student,
-    ensure_all_registration_questionnaires,
-    ensure_registration_questionnaire,
-)
+from backend.services.students import PHONE_PATTERN, create_student
 from backend.utils.crypto import encrypt_secret
 from backend.utils.passwords import (
     client_password_digest,
@@ -88,8 +83,6 @@ def _check_password(user_type: str, username: str, password_digest: str) -> Stud
 def _identity_for(account: Student | Admin, user_type: str) -> dict[str, Any]:
     if user_type == "student":
         assert isinstance(account, Student)
-        ensure_registration_questionnaire(account)
-        db.session.commit()
         return {
             "id": account.student_id,
             "user_type": "student",
@@ -98,9 +91,6 @@ def _identity_for(account: Student | Admin, user_type: str) -> dict[str, Any]:
             "department": "",
         }
     assert isinstance(account, Admin)
-    if account.role == "system_admin":
-        ensure_all_registration_questionnaires()
-        db.session.commit()
     return {
         "id": account.admin_id,
         "user_type": "admin",
@@ -402,10 +392,10 @@ def student_register():
             password_digest or client_password_digest(password),
             password_is_digest=True,
         )
-        questionnaire = RegistrationQuestionnaire.query.filter_by(student_id=student.student_id).one()
-        questionnaire.phone = phone
-        questionnaire.wechat = wechat
-        questionnaire.suggestion = suggestion
+        student.phone = phone
+        student.wechat = wechat
+        student.suggestion = suggestion
+        student.info_updated_at = datetime.now()
         secret, _uri = bind_new_totp(student)
         db.session.commit()
     except Exception:

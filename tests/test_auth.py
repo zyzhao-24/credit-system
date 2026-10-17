@@ -2,7 +2,7 @@
 
 import pyotp
 
-from backend.models import Admin, RegistrationQuestionnaire, Student
+from backend.models import Admin, Student
 from backend.services.otp_service import get_totp_secret
 from backend.utils.passwords import client_password_digest
 from mailstub import SENT_MAIL
@@ -159,9 +159,11 @@ def test_registration_requires_email_code_and_binds_otp(app, database):
     assert response.get_json()["success"] is True
 
     student = database.session.get(Student, "2001")
-    questionnaire = RegistrationQuestionnaire.query.filter_by(student_id="2001").one()
     assert student.password_hash.startswith("pbkdf2:sha256:")
-    assert questionnaire.wechat == "new-wechat"
+    # 报名信息直接落在学生档案上
+    assert student.wechat == "new-wechat"
+    assert student.phone == "13700000000"
+    assert student.info_updated_at is not None
     # 注册成功后 OTP 已绑定，且二维码邮件已（打桩）发送
     assert get_totp_secret(student)
     otp_mail = next(m for m in SENT_MAIL if "绑定动态验证码" in m["subject"])

@@ -7,7 +7,7 @@ import {
   getActivityCategories,
   getAvailableQuestionnaires,
   getMyRegistrations,
-  getRegistrationQuestionnaire,
+  getStudentProfile,
   submitQuestionnaire,
   updateQuestionnaireResponse,
 } from "@/api/service";
@@ -61,17 +61,14 @@ export function ActivityRegistrationPage() {
   const openFill = async (questionnaire: AvailableQuestionnaire, existing?: MyRegistration) => {
     if (!existing) {
       try {
-        const registration = await getRegistrationQuestionnaire();
-        if (
-          registration.success &&
-          (!registration.questionnaire.phone || !registration.questionnaire.wechat)
-        ) {
-          toast.warning("请先完善注册问卷中的手机号和微信号");
-          navigate("/student/questionnaire");
+        const profile = await getStudentProfile();
+        if (profile.success && (!profile.profile.phone || !profile.profile.wechat)) {
+          toast.warning("请先完善报名信息中的手机号和微信号");
+          navigate("/student/profile");
           return;
         }
       } catch (error) {
-        toast.error(errorMessage(error, "检查注册问卷失败"));
+        toast.error(errorMessage(error, "检查报名信息失败"));
         return;
       }
     }
@@ -389,7 +386,7 @@ function FillDialog({
         className="max-w-xl"
       >
         <div className="rounded-md bg-[#e3f2fd] px-3 py-3 mb-5 text-sm">
-          <strong>提示：</strong>手机号和微信号将自动从注册问卷中获取
+          <strong>提示：</strong>手机号和微信号将自动从报名信息中获取
         </div>
 
         {questionnaire.has_category_question ? (

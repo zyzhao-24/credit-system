@@ -111,6 +111,11 @@ cd frontend && npm run dev
 5. **CORS 收紧**：生产同源部署默认不开放跨域；开发仅放行 Vite 来源（`CORS_ORIGINS`）。
 6. **学生注册需邮箱验证**：注册前须先获取学号邮箱验证码；注册成功后登录所需的
    OTP 二维码通过邮件下发。
+7. **注册问卷并入学生档案**：手机号/微信号/建议直接存放在 `students` 表
+   （`phone`/`wechat`/`suggestion`/`info_updated_at`），不再是独立问卷实体；
+   旧 `registration_questionnaires` 表在启动时被删除，其历史数据不保留
+   （重新从 data.json 迁移会把联系方式映射到学生列）。学生端在“报名信息”页
+   （`/student/profile`）维护，管理端在“学生管理”标签页查看/编辑/导出。
 
 ## 生产部署注意
 

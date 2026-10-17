@@ -5,8 +5,8 @@ import { AdminDashboard } from "@/pages/AdminDashboard";
 import { AdminLoginPage } from "@/pages/AdminLoginPage";
 import { LoginPage } from "@/pages/LoginPage";
 import { QuestionnaireAdminPage } from "@/pages/QuestionnaireAdminPage";
-import { RegistrationQuestionnairePage } from "@/pages/RegistrationQuestionnairePage";
 import { StudentDashboard } from "@/pages/StudentDashboard";
+import { StudentProfilePage } from "@/pages/StudentProfilePage";
 
 export default function App() {
   return (
@@ -37,10 +37,10 @@ export default function App() {
         }
       />
       <Route
-        path="/student/questionnaire"
+        path="/student/profile"
         element={
           <RequireAuth userType="student">
-            <RegistrationQuestionnairePage />
+            <StudentProfilePage />
           </RequireAuth>
         }
       />

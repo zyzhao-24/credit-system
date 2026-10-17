@@ -1,24 +1,10 @@
-"""Questionnaire template and response models."""
+"""Questionnaire template and response models.
+
+报名信息（手机号/微信号/建议）已并入 students 表（见 models/core.py），
+这里只保留活动问卷模板与报名响应。
+"""
 
 from backend.extensions import db
-
-
-class RegistrationQuestionnaire(db.Model):
-    __tablename__ = "registration_questionnaires"
-
-    questionnaire_id = db.Column(db.String(36), primary_key=True)
-    student_id = db.Column(
-        db.String(32),
-        db.ForeignKey("students.student_id", ondelete="CASCADE"),
-        nullable=False,
-        unique=True,
-        index=True,
-    )
-    name = db.Column(db.String(100), nullable=False)
-    phone = db.Column(db.String(20), nullable=False, default="")
-    wechat = db.Column(db.String(100), nullable=False, default="")
-    suggestion = db.Column(db.Text, nullable=False, default="")
-    submit_time = db.Column(db.DateTime, nullable=False)
 
 
 class ActivityQuestionnaire(db.Model):

@@ -10,6 +10,7 @@ import type {
   AdminReport,
   AdminResponse,
   AdminStudent,
+  AdminStudentInfo,
   AllStudentCredits,
   AvailableQuestionnaire,
   BatchImportResult,
@@ -20,8 +21,8 @@ import type {
   EmailConfig,
   LoginStepOneResponse,
   MyRegistration,
-  RegistrationQuestionnaire,
   StudentActivities,
+  StudentProfile,
   TokenResponse,
 } from "./types";
 
@@ -125,20 +126,20 @@ export async function getStudentCategories(): Promise<{ success: boolean; catego
   return data;
 }
 
-export async function getRegistrationQuestionnaire(): Promise<{
+export async function getStudentProfile(): Promise<{
   success: boolean;
-  questionnaire: RegistrationQuestionnaire;
+  profile: StudentProfile;
 }> {
-  const { data } = await api.get("/api/student/registration_questionnaire");
+  const { data } = await api.get("/api/student/profile");
   return data;
 }
 
-export async function updateRegistrationQuestionnaire(payload: {
+export async function updateStudentProfile(payload: {
   phone: string;
   wechat: string;
   suggestion: string;
 }): Promise<BasicResponse> {
-  const { data } = await api.put<BasicResponse>("/api/student/registration_questionnaire", payload);
+  const { data } = await api.put<BasicResponse>("/api/student/profile", payload);
   return data;
 }
 
@@ -235,6 +236,27 @@ export async function changeStudentPasswordByAdmin(
     student_id: studentId,
     new_password: newPassword,
   });
+  return data;
+}
+
+// ========== 管理端：学生报名信息 ==========
+
+export async function getAdminStudentInfos(): Promise<{
+  success: boolean;
+  students: AdminStudentInfo[];
+  total: number;
+}> {
+  const { data } = await api.get("/api/admin/students/info");
+  return data;
+}
+
+export async function updateAdminStudentInfo(payload: {
+  student_id: string;
+  phone: string;
+  wechat: string;
+  suggestion: string;
+}): Promise<BasicResponse> {
+  const { data } = await api.put<BasicResponse>("/api/admin/students/info", payload);
   return data;
 }
 
@@ -518,22 +540,6 @@ export async function getAllQuestionnaires(): Promise<{
   total: number;
 }> {
   const { data } = await api.get("/api/admin/questionnaires/all");
-  return data;
-}
-
-export async function updateQuestionnaire(payload: {
-  questionnaire_id: string;
-  phone: string;
-  wechat: string;
-  suggestion?: string;
-  status?: string;
-}): Promise<BasicResponse> {
-  const { data } = await api.put<BasicResponse>("/api/admin/questionnaire/update", payload);
-  return data;
-}
-
-export async function deleteQuestionnaire(questionnaireId: string): Promise<BasicResponse> {
-  const { data } = await api.delete<BasicResponse>(`/api/admin/questionnaire/${questionnaireId}`);
   return data;
 }
 

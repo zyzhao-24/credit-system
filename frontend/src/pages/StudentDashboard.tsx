@@ -72,10 +72,10 @@ export function StudentDashboard() {
           </TabsTrigger>
           <TabsTrigger value="password">修改密码</TabsTrigger>
           <TabsTrigger value="__questionnaire" asChild>
-            <Link to="/student/questionnaire" className="text-success">
+            <Link to="/student/profile" className="text-success">
               <span className="inline-flex items-center gap-1">
                 <FileText className="h-4 w-4" />
-                注册问卷
+                报名信息
               </span>
             </Link>
           </TabsTrigger>

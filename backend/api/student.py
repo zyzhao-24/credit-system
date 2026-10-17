@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from flask import Blueprint, g, jsonify, request
 
 from backend.auth.decorators import require_auth, require_student
 from backend.extensions import db
-from backend.models import Activity, Category, RegistrationQuestionnaire, Student
+from backend.models import Activity, Category, Student
 from backend.services.credits import calculate_student_credits
 from backend.services.legacy_import import DATETIME_FORMAT
 from backend.services.students import PHONE_PATTERN
@@ -100,33 +102,32 @@ def student_categories():
     return jsonify({"success": True, "categories": categories})
 
 
-@student_bp.get("/api/student/registration_questionnaire")
-@require_student
-def get_registration_questionnaire():
-    questionnaire = RegistrationQuestionnaire.query.filter_by(
-        student_id=g.current_identity.get("sub")
-    ).first()
-    if questionnaire is None:
-        return _error("未找到注册问卷")
-    return jsonify(
-        {
-            "success": True,
-            "questionnaire": {
-                "questionnaire_id": questionnaire.questionnaire_id,
-                "student_id": questionnaire.student_id,
-                "name": questionnaire.name,
-                "phone": questionnaire.phone,
-                "wechat": questionnaire.wechat,
-                "suggestion": questionnaire.suggestion,
-                "submit_time": questionnaire.submit_time.strftime(DATETIME_FORMAT),
-            },
-        }
-    )
+def _profile_payload(student: Student) -> dict:
+    return {
+        "student_id": student.student_id,
+        "name": student.name,
+        "phone": student.phone,
+        "wechat": student.wechat,
+        "suggestion": student.suggestion,
+        "updated_at": student.info_updated_at.strftime(DATETIME_FORMAT)
+        if student.info_updated_at
+        else "",
+    }
 
 
-@student_bp.put("/api/student/registration_questionnaire")
+@student_bp.get("/api/student/profile")
 @require_student
-def update_registration_questionnaire():
+def get_profile():
+    """报名信息是学生档案的一部分，直接取自 students 表。"""
+    student = db.session.get(Student, g.current_identity.get("sub"))
+    if student is None:
+        return _error("学生不存在")
+    return jsonify({"success": True, "profile": _profile_payload(student)})
+
+
+@student_bp.put("/api/student/profile")
+@require_student
+def update_profile():
     data = request.get_json(silent=True) or {}
     phone = data.get("phone", "").strip()
     wechat = data.get("wechat", "").strip()
@@ -134,14 +135,13 @@ def update_registration_questionnaire():
     if phone and not PHONE_PATTERN.fullmatch(phone):
         return _error("手机号格式不正确")
 
-    questionnaire = RegistrationQuestionnaire.query.filter_by(
-        student_id=g.current_identity.get("sub")
-    ).first()
-    if questionnaire is None:
-        return _error("未找到注册问卷")
-    questionnaire.phone = phone
-    questionnaire.wechat = wechat
-    questionnaire.suggestion = suggestion
+    student = db.session.get(Student, g.current_identity.get("sub"))
+    if student is None:
+        return _error("学生不存在")
+    student.phone = phone
+    student.wechat = wechat
+    student.suggestion = suggestion
+    student.info_updated_at = datetime.now()
     db.session.commit()
     return jsonify({"success": True, "message": "更新成功"})
 

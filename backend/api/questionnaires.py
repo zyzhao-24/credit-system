@@ -14,7 +14,6 @@ from backend.models import (
     Activity,
     ActivityQuestionnaire,
     QuestionnaireResponse,
-    RegistrationQuestionnaire,
     Student,
 )
 from backend.services.questionnaires import template_is_open
@@ -121,11 +120,10 @@ def submit_questionnaire():
     if now > template.end_time:
         return _error("问卷已截止")
 
-    registration = RegistrationQuestionnaire.query.filter_by(student_id=student_id).first()
-    phone = registration.phone if registration else ""
-    wechat = registration.wechat if registration else ""
+    phone = student.phone
+    wechat = student.wechat
     if not phone or not wechat:
-        return _error("请先在注册问卷中填写手机号和微信号")
+        return _error("请先在报名信息中填写手机号和微信号")
     if template.has_category_question and not intended_category:
         return _error("请选择意向学分类别")
 

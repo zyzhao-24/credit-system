@@ -76,14 +76,14 @@ export interface StudentActivities {
   no_category_activities: ActivityListItem[];
 }
 
-export interface RegistrationQuestionnaire {
-  questionnaire_id: string;
+/** 学生报名信息（原注册问卷，已并入学生档案）。 */
+export interface StudentProfile {
   student_id: string;
   name: string;
   phone: string;
   wechat: string;
   suggestion: string;
-  submit_time: string;
+  updated_at: string;
 }
 
 export interface CustomQuestion {
@@ -262,13 +262,10 @@ export interface AdminQuestionnaireTemplate {
   custom_questions: CustomQuestion[];
 }
 
-export interface AdminRegistrationItem extends RegistrationQuestionnaire {
-  questionnaire_type: "registration";
-}
+/** 管理端学生报名信息（与学生端档案同构）。 */
+export type AdminStudentInfo = StudentProfile;
 
-export type AdminQuestionnaire =
-  | ({ questionnaire_type: "registration" } & RegistrationQuestionnaire)
-  | AdminQuestionnaireTemplate;
+export type AdminQuestionnaire = AdminQuestionnaireTemplate;
 
 export interface AdminResponse {
   response_id: string;

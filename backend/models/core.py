@@ -11,6 +11,11 @@ class Student(db.Model):
     password_hash = db.Column(db.String(255), nullable=False)
     password_reset_required = db.Column(db.Boolean, nullable=False, default=False)
     totp_secret_encrypted = db.Column(db.Text, nullable=False, default="")
+    # 报名信息是学生档案的一部分，不再是独立问卷
+    phone = db.Column(db.String(20), nullable=False, default="")
+    wechat = db.Column(db.String(100), nullable=False, default="")
+    suggestion = db.Column(db.Text, nullable=False, default="")
+    info_updated_at = db.Column(db.DateTime, nullable=True)
 
     __table_args__ = (
         db.CheckConstraint("length(student_id) > 0", name="ck_students_id_not_empty"),

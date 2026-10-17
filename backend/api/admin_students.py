@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from flask import Blueprint, g, jsonify, request
 
 from backend.auth.decorators import require_admin, require_system_admin
 from backend.extensions import db
 from backend.models import Student
 from backend.services.exporters import csv_file_response
-from backend.services.students import create_student, delete_student_and_questionnaires
+from backend.services.legacy_import import DATETIME_FORMAT
+from backend.services.ranking import format_datetime
+from backend.services.students import PHONE_PATTERN, create_student, delete_student_account
 from backend.utils.passwords import client_password_digest, hash_password_digest
 
 
@@ -66,7 +70,7 @@ def manage_students():
         except Exception:
             db.session.rollback()
             raise
-        return jsonify({"success": True, "message": "已添加学生并创建空白问卷"})
+        return jsonify({"success": True, "message": "已添加学生"})
 
     if request.method == "PUT":
         student_id = data.get("student_id", "")
@@ -84,10 +88,10 @@ def manage_students():
     student = db.session.get(Student, student_id)
     if student is None:
         return _error("学生不存在")
-    deleted_questionnaires = delete_student_and_questionnaires(student)
+    deleted_responses = delete_student_account(student)
     db.session.commit()
     return jsonify(
-        {"success": True, "message": f"已删除学生及其{deleted_questionnaires}条问卷记录"}
+        {"success": True, "message": f"已删除学生及其{deleted_responses}条报名记录"}
     )
 
 
@@ -161,3 +165,69 @@ def change_student_password():
     _apply_password(student, new_password)
     db.session.commit()
     return jsonify({"success": True, "message": "密码修改成功"})
+
+
+# ========== 学生报名信息（原注册问卷，已并入 students 表） ==========
+
+
+def _info_payload(student: Student) -> dict:
+    return {
+        "student_id": student.student_id,
+        "name": student.name,
+        "phone": student.phone,
+        "wechat": student.wechat,
+        "suggestion": student.suggestion,
+        "updated_at": student.info_updated_at.strftime(DATETIME_FORMAT)
+        if student.info_updated_at
+        else "",
+    }
+
+
+@admin_students_bp.get("/api/admin/students/info")
+@require_system_admin
+def list_student_infos():
+    items = [
+        _info_payload(student)
+        for student in Student.query.order_by(Student.student_id.asc()).all()
+    ]
+    return jsonify({"success": True, "students": items, "total": len(items)})
+
+
+@admin_students_bp.put("/api/admin/students/info")
+@require_system_admin
+def update_student_info():
+    data = request.get_json(silent=True) or {}
+    student_id = data.get("student_id", "").strip()
+    phone = data.get("phone", "").strip()
+    wechat = data.get("wechat", "").strip()
+    suggestion = data.get("suggestion", "").strip()
+    if phone and not PHONE_PATTERN.fullmatch(phone):
+        return _error("手机号格式不正确")
+
+    student = db.session.get(Student, student_id)
+    if student is None:
+        return _error("学生不存在")
+    student.phone = phone
+    student.wechat = wechat
+    student.suggestion = suggestion
+    student.info_updated_at = datetime.now()
+    db.session.commit()
+    return jsonify({"success": True, "message": "更新成功"})
+
+
+@admin_students_bp.get("/api/admin/students/info/export")
+@require_system_admin
+def export_student_infos():
+    rows = (
+        (
+            student.student_id,
+            student.name,
+            student.phone,
+            student.wechat,
+            student.suggestion,
+            format_datetime(student.info_updated_at),
+        )
+        for student in Student.query.order_by(Student.student_id.asc()).all()
+    )
+    filename = f"student_infos_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+    return csv_file_response(filename, ["学号", "姓名", "手机号", "微信号", "建议", "更新时间"], rows)

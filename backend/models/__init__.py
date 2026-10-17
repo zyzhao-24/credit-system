@@ -20,5 +20,4 @@ from backend.models.core import (  # noqa: F401
 from backend.models.questionnaire import (  # noqa: F401
     ActivityQuestionnaire,
     QuestionnaireResponse,
-    RegistrationQuestionnaire,
 )

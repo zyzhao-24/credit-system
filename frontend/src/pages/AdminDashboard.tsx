@@ -11,8 +11,8 @@ import { StudentsSection } from "./admin/StudentsSection";
 
 /**
  * 管理员控制台。系统管理员显示全部标签；普通管理员显示
- * 学生管理（只读学生列表，无注册问卷）、活动管理和数据报表（仅总体统计），与 legacy 一致。
- * 学分查询/导出在“合格情况”标签页；注册问卷管理并入“学生管理”。
+ * 学生管理（只读学生列表，无报名信息）、活动管理和数据报表（仅总体统计），与 legacy 一致。
+ * 学分查询/导出在“合格情况”标签页；学生报名信息并入“学生管理”。
  */
 export function AdminDashboard() {
   const { user } = useAuth();

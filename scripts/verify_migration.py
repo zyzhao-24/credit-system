@@ -24,7 +24,6 @@ from backend.models import (  # noqa: E402
     Entry,
     QuestionnaireResponse,
     Record,
-    RegistrationQuestionnaire,
     Student,
 )
 from backend.services.credits import calculate_student_credits  # noqa: E402
@@ -118,14 +117,28 @@ def main() -> int:
             "activities": Activity.query.count(),
             "records": Record.query.count(),
             "entries": Entry.query.count(),
-            "registration_questionnaires": RegistrationQuestionnaire.query.count(),
+            # 注册问卷已并入 students 表：用已映射信息的学生数对齐旧表行数
+            "registration_questionnaires": Student.query.filter(
+                Student.info_updated_at.isnot(None)
+            ).count(),
             "activity_questionnaires": ActivityQuestionnaire.query.count(),
             "questionnaire_responses": QuestionnaireResponse.query.count(),
         }
         checks["counts_match_golden"] = counts == golden["counts"]
 
+        # 注册问卷不再保留原 questionnaire_id 键，字段级校验单独做，形状 diff 中排除
         exported = normalize(export_legacy_payload(redact_sensitive=True))
+        exported.pop("registration_questionnaires", None)
         expected = redacted_source(payload)
+        expected.pop("registration_questionnaires", None)
+        checks["student_info_mapped"] = all(
+            (student := db.session.get(Student, item["student_id"])) is not None
+            and student.phone == item.get("phone", "")
+            and student.wechat == item.get("wechat", "")
+            and student.suggestion == item.get("suggestion", "")
+            for item in payload.get("registration_questionnaires", {}).values()
+            if item["student_id"] in payload.get("students", {})
+        )
         mismatches = diff_paths(expected, exported)
         checks["legacy_shape_roundtrip"] = not mismatches
         checks["legacy_shape_mismatch_paths"] = mismatches

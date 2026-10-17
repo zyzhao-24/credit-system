@@ -14,7 +14,6 @@ from backend.models import (
     Activity,
     ActivityQuestionnaire,
     QuestionnaireResponse,
-    RegistrationQuestionnaire,
 )
 from backend.services.exporters import csv_file_response
 from backend.services.questionnaires import normalize_custom_questions, validate_template_window
@@ -32,18 +31,6 @@ def _error(message: str, status: int = 200, **extra):
 def _activity_name(activity_id: str) -> str:
     activity = db.session.get(Activity, activity_id)
     return activity.name if activity else "未知活动"
-
-
-def _registration_payload(item: RegistrationQuestionnaire) -> dict:
-    return {
-        "questionnaire_id": item.questionnaire_id,
-        "student_id": item.student_id,
-        "name": item.name,
-        "phone": item.phone,
-        "wechat": item.wechat,
-        "suggestion": item.suggestion,
-        "submit_time": format_datetime(item.submit_time),
-    }
 
 
 def _template_payload(item: ActivityQuestionnaire) -> dict:
@@ -93,16 +80,10 @@ def _sync_activity_questionnaire_fields(activity_id: str) -> None:
 @admin_questionnaires_bp.get("/api/admin/questionnaires/all")
 @require_system_admin
 def all_questionnaires():
-    questionnaires = []
-    for item in RegistrationQuestionnaire.query.all():
-        payload = _registration_payload(item)
-        payload["questionnaire_type"] = "registration"
-        questionnaires.append(payload)
-    questionnaires.extend(
-        _template_payload(item) for item in ActivityQuestionnaire.query.all()
-    )
-    questionnaires.sort(
-        key=lambda item: item.get("submit_time") or item.get("created_time", ""),
+    """只列活动问卷模板；报名信息已并入学生档案，见 /api/admin/students/info。"""
+    questionnaires = sorted(
+        (_template_payload(item) for item in ActivityQuestionnaire.query.all()),
+        key=lambda item: item.get("created_time", ""),
         reverse=True,
     )
     return jsonify({"success": True, "questionnaires": questionnaires, "total": len(questionnaires)})
@@ -113,18 +94,6 @@ def all_questionnaires():
 def update_questionnaire():
     data = request.get_json(silent=True) or {}
     questionnaire_id = data.get("questionnaire_id", "")
-    phone = data.get("phone", "").strip()
-    wechat = data.get("wechat", "").strip()
-    if phone and not PHONE_PATTERN.fullmatch(phone):
-        return _error("手机号格式不正确")
-
-    registration = db.session.get(RegistrationQuestionnaire, questionnaire_id)
-    if registration:
-        registration.phone = phone
-        registration.wechat = wechat
-        registration.suggestion = data.get("suggestion", "").strip()
-        db.session.commit()
-        return jsonify({"success": True, "message": "更新成功"})
 
     template = db.session.get(ActivityQuestionnaire, questionnaire_id)
     if template:
@@ -140,11 +109,6 @@ def update_questionnaire():
 @admin_questionnaires_bp.delete("/api/admin/questionnaire/<questionnaire_id>")
 @require_system_admin
 def delete_questionnaire(questionnaire_id: str):
-    registration = db.session.get(RegistrationQuestionnaire, questionnaire_id)
-    if registration:
-        db.session.delete(registration)
-        db.session.commit()
-        return jsonify({"success": True, "message": "删除成功"})
     template = db.session.get(ActivityQuestionnaire, questionnaire_id)
     if template:
         activity_id = template.activity_id
@@ -339,44 +303,16 @@ def delete_response(response_id: str):
 @admin_questionnaires_bp.get("/api/admin/questionnaires/export")
 @require_system_admin
 def export_all_questionnaires():
-    type_filter = request.args.get("type", "")
     rows = []
-    if not type_filter or type_filter == "registration":
-        rows.extend(
-            ("注册问卷", item.student_id, item.name, item.phone, item.wechat, item.suggestion or "", format_datetime(item.submit_time))
-            for item in RegistrationQuestionnaire.query.all()
+    for response in QuestionnaireResponse.query.all():
+        template = db.session.get(ActivityQuestionnaire, response.questionnaire_id)
+        if not template:
+            continue
+        status_text = "已报名" if response.status == "active" else "已取消"
+        remark = f"{_activity_name(template.activity_id)} - {template.title} ({status_text}) - 意向类别：{response.intended_category}"
+        rows.append(
+            ("活动问卷", response.student_id, response.student_name, response.phone, response.wechat, remark, format_datetime(response.submit_time))
         )
-    if not type_filter or type_filter == "activity":
-        for response in QuestionnaireResponse.query.all():
-            template = db.session.get(ActivityQuestionnaire, response.questionnaire_id)
-            if not template:
-                continue
-            status_text = "已报名" if response.status == "active" else "已取消"
-            remark = f"{_activity_name(template.activity_id)} - {template.title} ({status_text}) - 意向类别：{response.intended_category}"
-            rows.append(
-                ("活动问卷", response.student_id, response.student_name, response.phone, response.wechat, remark, format_datetime(response.submit_time))
-            )
     rows.sort(key=lambda row: row[6], reverse=True)
     filename = f"questionnaires_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
     return csv_file_response(filename, ["类型", "学号", "姓名", "手机号", "微信号", "备注", "提交时间"], rows)
-
-
-@admin_questionnaires_bp.get("/api/admin/registration_questionnaires")
-@require_system_admin
-def registration_questionnaires():
-    items = [
-        _registration_payload(item)
-        for item in RegistrationQuestionnaire.query.order_by(RegistrationQuestionnaire.submit_time.desc()).all()
-    ]
-    return jsonify({"success": True, "questionnaires": items, "total": len(items)})
-
-
-@admin_questionnaires_bp.get("/api/admin/registration_questionnaires/export")
-@require_system_admin
-def export_registration_questionnaires():
-    rows = (
-        (item.student_id, item.name, item.phone, item.wechat, item.suggestion, format_datetime(item.submit_time))
-        for item in RegistrationQuestionnaire.query.order_by(RegistrationQuestionnaire.submit_time.desc()).all()
-    )
-    filename = f"registration_questionnaires_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-    return csv_file_response(filename, ["学号", "姓名", "手机号", "微信号", "建议", "提交时间"], rows)

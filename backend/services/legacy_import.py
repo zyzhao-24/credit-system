@@ -22,7 +22,6 @@ from backend.models import (
     Entry,
     QuestionnaireResponse,
     Record,
-    RegistrationQuestionnaire,
     Setting,
     Student,
 )
@@ -138,18 +137,17 @@ def import_legacy_payload(payload: dict[str, Any]) -> dict[str, int]:
                 entry.categories = entry_item.get("categories", [])
                 record.entries.append(entry)
 
-    for questionnaire_id, item in payload.get("registration_questionnaires", {}).items():
-        db.session.add(
-            RegistrationQuestionnaire(
-                questionnaire_id=questionnaire_id,
-                student_id=item["student_id"],
-                name=item["name"],
-                phone=item.get("phone", ""),
-                wechat=item.get("wechat", ""),
-                suggestion=item.get("suggestion", ""),
-                submit_time=parse_datetime(item["submit_time"]),
-            )
-        )
+    # 注册问卷已并入 students 表：联系方式直接写到对应学生行，学号缺失的记录丢弃
+    mapped_infos = 0
+    for item in payload.get("registration_questionnaires", {}).values():
+        student = db.session.get(Student, item["student_id"])
+        if student is None:
+            continue
+        student.phone = item.get("phone", "")
+        student.wechat = item.get("wechat", "")
+        student.suggestion = item.get("suggestion", "")
+        student.info_updated_at = parse_datetime(item.get("submit_time"))
+        mapped_infos += 1
 
     for questionnaire_id, item in payload.get("activity_questionnaires", {}).items():
         db.session.add(

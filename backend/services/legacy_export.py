@@ -16,7 +16,6 @@ from backend.models import (
     Entry,
     QuestionnaireResponse,
     Record,
-    RegistrationQuestionnaire,
     Setting,
     Student,
 )
@@ -97,18 +96,19 @@ def export_legacy_payload(redact_sensitive: bool = True) -> dict[str, Any]:
             "records": records,
         }
 
+    # 注册问卷已并入 students 表；为保持 legacy JSON 形状，由学生信息合成，
+    # 键使用学号（原 questionnaire_id 已不存在）
     registration_questionnaires = {
-        item.questionnaire_id: {
-            "student_id": item.student_id,
-            "name": item.name,
-            "phone": item.phone,
-            "wechat": item.wechat,
-            "suggestion": item.suggestion,
-            "submit_time": _dt(item.submit_time),
+        student.student_id: {
+            "student_id": student.student_id,
+            "name": student.name,
+            "phone": student.phone,
+            "wechat": student.wechat,
+            "suggestion": student.suggestion,
+            "submit_time": _dt(student.info_updated_at),
         }
-        for item in RegistrationQuestionnaire.query.order_by(
-            RegistrationQuestionnaire.questionnaire_id.asc()
-        ).all()
+        for student in Student.query.order_by(Student.student_id.asc()).all()
+        if student.phone or student.wechat or student.suggestion
     }
     activity_questionnaires = {
         item.questionnaire_id: {

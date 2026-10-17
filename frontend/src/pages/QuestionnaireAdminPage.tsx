@@ -42,7 +42,7 @@ import { RegistrationBadge } from "@/components/StatusBadge";
 
 const PHONE_PATTERN = /^1[3-9]\d{9}$/;
 
-/** 问卷管理页（系统管理员）：活动问卷模板。注册问卷已并入“学生管理”标签页。 */
+/** 问卷管理页（系统管理员）：活动问卷模板。学生报名信息在“学生管理”标签页。 */
 export function QuestionnaireAdminPage() {
   const navigate = useNavigate();
   const [templates, setTemplates] = useState<AdminQuestionnaireTemplate[]>([]);

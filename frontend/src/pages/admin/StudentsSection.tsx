@@ -6,13 +6,12 @@ import {
   batchImportStudents,
   changeStudentPasswordByAdmin,
   createStudent,
-  deleteQuestionnaire,
   deleteStudent,
+  getAdminStudentInfos,
   getAdminStudents,
-  getAllQuestionnaires,
-  updateQuestionnaire,
+  updateAdminStudentInfo,
 } from "@/api/service";
-import type { AdminRegistrationItem, AdminStudent } from "@/api/types";
+import type { AdminStudent, AdminStudentInfo } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
@@ -30,12 +29,12 @@ import { EmptyState, Field } from "@/components/common";
 
 const PHONE_PATTERN = /^1[3-9]\d{9}$/;
 
-/** 学生管理标签页：学生列表（普通管理员只读）+ 注册问卷（仅系统管理员）。 */
+/** 学生管理标签页：学生列表（普通管理员只读）+ 报名信息（仅系统管理员）。 */
 export function StudentsSection({ canEdit }: { canEdit: boolean }) {
   return (
     <div className="flex flex-col gap-8">
       <StudentsBlock canEdit={canEdit} />
-      {canEdit ? <RegistrationsBlock /> : null}
+      {canEdit ? <StudentInfosBlock /> : null}
     </div>
   );
 }
@@ -338,43 +337,38 @@ function ChangeStudentPasswordForm({
   );
 }
 
-// ========== 注册问卷 ==========
+// ========== 报名信息（学生档案的一部分） ==========
 
-function RegistrationsBlock() {
-  const [registrations, setRegistrations] = useState<AdminRegistrationItem[]>([]);
+function StudentInfosBlock() {
+  const [infos, setInfos] = useState<AdminStudentInfo[]>([]);
   const [expanded, setExpanded] = useState(false);
   const [search, setSearch] = useState("");
-  const [editTarget, setEditTarget] = useState<AdminRegistrationItem | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<AdminRegistrationItem | null>(null);
+  const [editTarget, setEditTarget] = useState<AdminStudentInfo | null>(null);
 
   const load = useCallback(() => {
-    getAllQuestionnaires()
+    getAdminStudentInfos()
       .then((data) => {
         if (data.success) {
-          setRegistrations(
-            data.questionnaires.filter(
-              (q): q is AdminRegistrationItem => q.questionnaire_type === "registration",
-            ),
-          );
+          setInfos(data.students);
         } else {
           toast.error("加载失败");
         }
       })
-      .catch((error) => toast.error(errorMessage(error, "加载注册问卷失败")));
+      .catch((error) => toast.error(errorMessage(error, "加载报名信息失败")));
   }, []);
 
   useEffect(load, [load]);
 
   const query = search.trim().toLowerCase();
   const filtered = query
-    ? registrations.filter(
-        (q) =>
-          q.student_id.toLowerCase().includes(query) ||
-          q.name.toLowerCase().includes(query) ||
-          (q.phone ?? "").includes(query) ||
-          (q.wechat ?? "").toLowerCase().includes(query),
+    ? infos.filter(
+        (info) =>
+          info.student_id.toLowerCase().includes(query) ||
+          info.name.toLowerCase().includes(query) ||
+          (info.phone ?? "").includes(query) ||
+          (info.wechat ?? "").toLowerCase().includes(query),
       )
-    : registrations;
+    : infos;
 
   return (
     <section>
@@ -384,7 +378,7 @@ function RegistrationsBlock() {
           onClick={() => setExpanded((prev) => !prev)}
         >
           {expanded ? <ChevronDown className="h-5 w-5" /> : <ChevronRight className="h-5 w-5" />}
-          注册问卷
+          报名信息
         </button>
         <div className="flex gap-2">
           <Input
@@ -397,7 +391,7 @@ function RegistrationsBlock() {
             variant="success"
             size="sm"
             onClick={() =>
-              downloadFile("/api/admin/questionnaires/export?type=registration", "registration.csv")
+              downloadFile("/api/admin/students/info/export", "学生报名信息.csv")
             }
           >
             <FileDown className="h-4 w-4" />
@@ -409,69 +403,47 @@ function RegistrationsBlock() {
       {expanded ? (
         <>
           <div className="mb-4 rounded-lg border-l-4 border-primary bg-[#e3f2fd] px-3 py-3 text-sm">
-            <strong>统计：</strong>总数：{registrations.length}
-            {filtered.length !== registrations.length ? (
+            <strong>统计：</strong>总数：{infos.length}
+            {filtered.length !== infos.length ? (
               <span className="ml-5">筛选结果：{filtered.length}</span>
             ) : null}
           </div>
           {filtered.length === 0 ? (
             <EmptyState
               icon="📝"
-              text={registrations.length === 0 ? "暂无注册问卷" : "没有符合条件的记录"}
+              text={infos.length === 0 ? "暂无学生" : "没有符合条件的学生"}
             />
           ) : (
             filtered.map((item) => (
-              <RegistrationCard
-                key={item.questionnaire_id}
+              <StudentInfoCard
+                key={item.student_id}
                 item={item}
                 onEdit={() => setEditTarget(item)}
-                onDelete={() => setDeleteTarget(item)}
               />
             ))
           )}
         </>
       ) : (
         <div className="rounded-lg border-l-4 border-primary bg-[#e3f2fd] px-3 py-3 text-sm">
-          <strong>统计：</strong>总数：{registrations.length}
+          <strong>统计：</strong>总数：{infos.length}
         </div>
       )}
 
-      <EditRegistrationDialog
+      <EditStudentInfoDialog
         target={editTarget}
         onOpenChange={(open) => !open && setEditTarget(null)}
         onDone={load}
-      />
-      <ConfirmDialog
-        open={deleteTarget !== null}
-        onOpenChange={(open) => !open && setDeleteTarget(null)}
-        message="确定要删除这条问卷记录吗？"
-        onConfirm={async () => {
-          if (!deleteTarget) return;
-          try {
-            const result = await deleteQuestionnaire(deleteTarget.questionnaire_id);
-            if (result.success) {
-              toast.success("删除成功");
-              load();
-            } else {
-              toast.error(result.message || "删除失败");
-            }
-          } catch (error) {
-            toast.error(errorMessage(error, "删除失败"));
-          }
-        }}
       />
     </section>
   );
 }
 
-function RegistrationCard({
+function StudentInfoCard({
   item,
   onEdit,
-  onDelete,
 }: {
-  item: AdminRegistrationItem;
+  item: AdminStudentInfo;
   onEdit: () => void;
-  onDelete: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -483,7 +455,7 @@ function RegistrationCard({
             {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
             {item.student_id} - {item.name}
           </h3>
-          <span className="text-sm text-[#666]">{item.submit_time}</span>
+          <span className="text-sm text-[#666]">{item.updated_at || "未填写"}</span>
         </div>
       </button>
       {expanded ? (
@@ -508,9 +480,6 @@ function RegistrationCard({
             <Button size="sm" variant="secondary" onClick={onEdit}>
               编辑
             </Button>
-            <Button size="sm" variant="danger" onClick={onDelete}>
-              删除
-            </Button>
           </div>
         </div>
       ) : null}
@@ -518,32 +487,32 @@ function RegistrationCard({
   );
 }
 
-function EditRegistrationDialog({
+function EditStudentInfoDialog({
   target,
   onOpenChange,
   onDone,
 }: {
-  target: AdminRegistrationItem | null;
+  target: AdminStudentInfo | null;
   onOpenChange: (open: boolean) => void;
   onDone: () => void;
 }) {
   return (
     <Dialog open={target !== null} onOpenChange={onOpenChange}>
-      <DialogContent title="编辑问卷">
+      <DialogContent title="编辑报名信息">
         {target ? (
-          <EditRegistrationForm target={target} onOpenChange={onOpenChange} onDone={onDone} />
+          <EditStudentInfoForm target={target} onOpenChange={onOpenChange} onDone={onDone} />
         ) : null}
       </DialogContent>
     </Dialog>
   );
 }
 
-function EditRegistrationForm({
+function EditStudentInfoForm({
   target,
   onOpenChange,
   onDone,
 }: {
-  target: AdminRegistrationItem;
+  target: AdminStudentInfo;
   onOpenChange: (open: boolean) => void;
   onDone: () => void;
 }) {
@@ -557,8 +526,8 @@ function EditRegistrationForm({
       return;
     }
     try {
-      const result = await updateQuestionnaire({
-        questionnaire_id: target.questionnaire_id,
+      const result = await updateAdminStudentInfo({
+        student_id: target.student_id,
         phone: phone.trim(),
         wechat: wechat.trim(),
         suggestion: suggestion.trim(),

@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { errorMessage } from "@/api/client";
-import { getRegistrationQuestionnaire, updateRegistrationQuestionnaire } from "@/api/service";
-import type { RegistrationQuestionnaire } from "@/api/types";
+import { getStudentProfile, updateStudentProfile } from "@/api/service";
+import type { StudentProfile } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardTitle } from "@/components/ui/card";
 import { Input, Textarea } from "@/components/ui/input";
@@ -11,22 +11,22 @@ import { Field } from "@/components/common";
 
 const PHONE_PATTERN = /^1[3-9]\d{9}$/;
 
-/** 学生注册问卷：查看和更新手机号、微信号、建议。 */
-export function RegistrationQuestionnairePage() {
-  const [questionnaire, setQuestionnaire] = useState<RegistrationQuestionnaire | null>(null);
+/** 学生报名信息：查看和更新手机号、微信号、建议（数据直接存放在学生档案上）。 */
+export function StudentProfilePage() {
+  const [profile, setProfile] = useState<StudentProfile | null>(null);
   const [phone, setPhone] = useState("");
   const [wechat, setWechat] = useState("");
   const [suggestion, setSuggestion] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   const load = () => {
-    getRegistrationQuestionnaire()
+    getStudentProfile()
       .then((data) => {
         if (data.success) {
-          setQuestionnaire(data.questionnaire);
-          setPhone(data.questionnaire.phone || "");
-          setWechat(data.questionnaire.wechat || "");
-          setSuggestion(data.questionnaire.suggestion || "");
+          setProfile(data.profile);
+          setPhone(data.profile.phone || "");
+          setWechat(data.profile.wechat || "");
+          setSuggestion(data.profile.suggestion || "");
         } else {
           toast.error("加载失败");
         }
@@ -44,7 +44,7 @@ export function RegistrationQuestionnairePage() {
     }
     setSubmitting(true);
     try {
-      const result = await updateRegistrationQuestionnaire({
+      const result = await updateStudentProfile({
         phone: trimmedPhone,
         wechat: wechat.trim(),
         suggestion: suggestion.trim(),
@@ -64,17 +64,17 @@ export function RegistrationQuestionnairePage() {
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-6">
-      <PageHeader title="注册问卷" homePath="/student" />
+      <PageHeader title="报名信息" homePath="/student" />
 
       <Card>
         <CardTitle>基本信息</CardTitle>
-        {questionnaire ? (
+        {profile ? (
           <>
             <Field label="学号">
-              <Input value={questionnaire.student_id} readOnly />
+              <Input value={profile.student_id} readOnly />
             </Field>
             <Field label="姓名">
-              <Input value={questionnaire.name} readOnly />
+              <Input value={profile.name} readOnly />
             </Field>
             <Field label="手机号" required>
               <Input
@@ -102,9 +102,11 @@ export function RegistrationQuestionnairePage() {
                 placeholder="对团校活动的建议（选填）"
               />
             </Field>
-            <Field label="提交时间">
-              <Input value={questionnaire.submit_time} readOnly />
-            </Field>
+            {profile.updated_at ? (
+              <Field label="最近更新">
+                <Input value={profile.updated_at} readOnly />
+              </Field>
+            ) : null}
             <Button className="w-full" onClick={save} disabled={submitting}>
               {submitting ? "保存中..." : "保存"}
             </Button>

@@ -29,18 +29,26 @@ def _configure_sqlite(dbapi_connection, _connection_record) -> None:
 
 
 def _ensure_schema(app: Flask) -> None:
-    """Idempotent SQLite schema upgrades for databases created before OTP.
+    """Idempotent SQLite schema upgrades for databases created by older versions.
 
     The project manages schema via create_all rather than Alembic revision
     files, so new columns on existing tables are added here with plain
-    ALTER TABLE guarded by PRAGMA table_info.
+    ALTER TABLE guarded by PRAGMA table_info. Tables that were folded into
+    other models (registration questionnaires are now student columns) are
+    dropped here; their old data is discarded by design.
     """
     with app.app_context():
         db.create_all()
         if not db.engine.url.get_backend_name() == "sqlite":
             return
         additions = {
-            "students": ["totp_secret_encrypted TEXT NOT NULL DEFAULT ''"],
+            "students": [
+                "totp_secret_encrypted TEXT NOT NULL DEFAULT ''",
+                "phone VARCHAR(20) NOT NULL DEFAULT ''",
+                "wechat VARCHAR(100) NOT NULL DEFAULT ''",
+                "suggestion TEXT NOT NULL DEFAULT ''",
+                "info_updated_at DATETIME",
+            ],
             "admins": ["totp_secret_encrypted TEXT NOT NULL DEFAULT ''"],
         }
         with db.engine.begin() as connection:
@@ -57,6 +65,8 @@ def _ensure_schema(app: Flask) -> None:
                         connection.exec_driver_sql(
                             f"ALTER TABLE {table} ADD COLUMN {column_def}"
                         )
+            # 注册问卷已并入 students 表，旧表连同数据一并删除
+            connection.exec_driver_sql("DROP TABLE IF EXISTS registration_questionnaires")
 
 
 def _ensure_system_admin(app: Flask) -> None:
