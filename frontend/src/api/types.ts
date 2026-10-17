@@ -18,24 +18,10 @@ export interface OtpRequiredResponse {
   message: string;
 }
 
-/** 登录第一步的另一种响应：账号尚未绑定 OTP，需先扫码绑定（随响应下发一次性二维码）。 */
-export interface OtpSetupRequiredResponse {
-  success: boolean;
-  otp_setup_required: true;
-  otp_bind: OtpBindChallenge;
-  message: string;
-}
-
-export type LoginStepOneResponse = TokenResponse | OtpRequiredResponse | OtpSetupRequiredResponse;
+export type LoginStepOneResponse = TokenResponse | OtpRequiredResponse;
 
 export function isOtpRequired(response: LoginStepOneResponse): response is OtpRequiredResponse {
   return (response as OtpRequiredResponse).otp_required === true;
-}
-
-export function isOtpSetupRequired(
-  response: LoginStepOneResponse,
-): response is OtpSetupRequiredResponse {
-  return (response as OtpSetupRequiredResponse).otp_setup_required === true;
 }
 
 export interface AuthUser {

@@ -78,7 +78,6 @@ PENDING_OTP_PURPOSES = {
     "student_reset",      # 学生主动重置 / 忘记密码成功后重新绑定
     "admin_reset",        # 系统管理员重置管理员 OTP（二次确认生效）
     "local_system_reset", # 本机维护页重置 system OTP
-    "login_bind",         # 未绑定 OTP 的普通管理员在登录途中首次绑定
 }
 
 

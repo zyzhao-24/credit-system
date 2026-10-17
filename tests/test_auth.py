@@ -100,8 +100,8 @@ def test_unbound_admin_cannot_self_bind_via_login(app, database, seed_legacy_pay
     assert "/local/system" in step1.get_json()["message"]
 
 
-def test_unbound_normal_admin_binds_otp_during_login(app, database, seed_legacy_payload, minimal_payload):
-    """未绑定 OTP 的普通管理员：密码通过后直接展示二维码，验证确认即完成登录。"""
+def test_unbound_normal_admin_cannot_login(app, database, seed_legacy_payload, minimal_payload):
+    """未绑定 OTP 的普通管理员同样禁止登录，只能由系统管理员中转重置。"""
     seed_legacy_payload(minimal_payload)
     client = app.test_client()
     admin = database.session.get(Admin, "admin")
@@ -109,33 +109,10 @@ def test_unbound_normal_admin_binds_otp_during_login(app, database, seed_legacy_
     database.session.commit()
 
     step1 = _step1(client, "admin", "adminpass", "admin")
-    assert step1.status_code == 200
-    payload = step1.get_json()
-    assert payload["otp_setup_required"] is True
-    bundle = payload["otp_bind"]
-    assert bundle["ticket"] and bundle["otp_qr"].startswith("data:image/png")
-    # 确认前仍未绑定
+    assert step1.status_code == 403
+    assert "系统管理员" in step1.get_json()["message"]
     database.session.refresh(admin)
     assert not get_totp_secret(admin)
-
-    wrong = client.post(
-        "/api/auth/otp/bind/confirm", json={"ticket": bundle["ticket"], "otp_code": "000000"}
-    )
-    assert wrong.get_json()["success"] is False
-
-    ok = client.post(
-        "/api/auth/otp/bind/confirm",
-        json={"ticket": bundle["ticket"], "otp_code": pyotp.TOTP(bundle["otp_secret"]).now()},
-    )
-    tokens = ok.get_json()
-    assert tokens["success"] is True
-    assert tokens["access_token"]  # 绑定成功直接签发登录令牌
-    database.session.refresh(admin)
-    assert get_totp_secret(admin) == bundle["otp_secret"]
-
-    me = client.get("/api/auth/me", headers={"Authorization": f"Bearer {tokens['access_token']}"})
-    assert me.status_code == 200
-    assert me.get_json()["user"]["role"] == "admin"
 
 
 def test_wrong_password_is_rejected(app, database, seed_legacy_payload, minimal_payload):

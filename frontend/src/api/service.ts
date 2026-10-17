@@ -91,16 +91,12 @@ export async function registerStudent(payload: {
   return data;
 }
 
-/** 确认待生效的 OTP 绑定：验证码证明已扫码后才写入。
- *  登录途中的首次绑定（login_bind）成功时会一并返回访问令牌。 */
-export async function confirmOtpBind(
-  ticket: string,
-  otpCode: string,
-): Promise<BasicResponse & Partial<TokenResponse>> {
-  const { data } = await api.post<BasicResponse & Partial<TokenResponse>>(
-    "/api/auth/otp/bind/confirm",
-    { ticket, otp_code: otpCode },
-  );
+/** 确认待生效的 OTP 绑定：验证码证明已扫码后才写入。 */
+export async function confirmOtpBind(ticket: string, otpCode: string): Promise<BasicResponse> {
+  const { data } = await api.post<BasicResponse>("/api/auth/otp/bind/confirm", {
+    ticket,
+    otp_code: otpCode,
+  });
   return data;
 }
 
