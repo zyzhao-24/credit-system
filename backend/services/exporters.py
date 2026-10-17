@@ -7,6 +7,9 @@ import io
 from collections.abc import Iterable, Sequence
 from typing import Any
 
+import openpyxl
+from openpyxl.styles import Alignment, Font
+
 from flask import send_file
 
 
@@ -32,6 +35,33 @@ def csv_file_response(filename: str, header: Sequence[Any], rows: Iterable[Seque
     return send_file(
         output,
         mimetype="text/csv; charset=utf-8",
+        as_attachment=True,
+        download_name=filename,
+    )
+
+
+def xlsx_file_response(
+    filename: str,
+    sheet_title: str,
+    header: Sequence[Any],
+    rows: Iterable[Sequence[Any]],
+):
+    workbook = openpyxl.Workbook()
+    worksheet = workbook.active
+    worksheet.title = sheet_title
+    worksheet.append(["" if value is None else str(value) for value in header])
+    for cell in worksheet[1]:
+        cell.font = Font(bold=True)
+        cell.alignment = Alignment(horizontal="center")
+    for row in rows:
+        worksheet.append(["" if value is None else str(value) for value in row])
+
+    output = io.BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    return send_file(
+        output,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         as_attachment=True,
         download_name=filename,
     )

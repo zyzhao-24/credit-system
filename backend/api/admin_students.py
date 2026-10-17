@@ -9,7 +9,7 @@ from flask import Blueprint, g, jsonify, request
 from backend.auth.decorators import require_admin, require_system_admin
 from backend.extensions import db
 from backend.models import Student
-from backend.services.exporters import csv_file_response
+from backend.services.exporters import xlsx_file_response
 from backend.services.legacy_import import DATETIME_FORMAT
 from backend.services.otp_service import clear_totp, has_totp
 from backend.services.ranking import format_datetime
@@ -159,16 +159,6 @@ def batch_students():
     return jsonify({"success": True, "added": added, "updated": updated, "errors": errors})
 
 
-@admin_students_bp.get("/api/admin/students/export_csv")
-@require_system_admin
-def export_students_csv():
-    rows = (
-        (student.student_id, student.name, "")
-        for student in Student.query.order_by(Student.student_id.asc()).all()
-    )
-    return csv_file_response("学生名单.csv", ["学号", "姓名", "密码"], rows)
-
-
 @admin_students_bp.post("/api/admin/change_student_password")
 @require_system_admin
 def change_student_password():
@@ -225,8 +215,10 @@ def export_student_infos():
         )
         for student in Student.query.order_by(Student.student_id.asc()).all()
     )
-    filename = f"student_infos_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-    return csv_file_response(filename, ["学号", "姓名", "手机号", "微信号", "建议", "更新时间"], rows)
+    filename = f"学生报名信息_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    return xlsx_file_response(
+        filename, "学生报名信息", ["学号", "姓名", "手机号", "微信号", "建议", "更新时间"], rows
+    )
 
 
 @admin_students_bp.post("/api/admin/students/reset_otp")

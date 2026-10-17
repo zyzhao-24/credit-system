@@ -73,15 +73,8 @@ export function StudentsSection({ canEdit }: { canEdit: boolean }) {
           </Button>
           <Button
             size="sm"
-            variant="secondary"
-            onClick={() => downloadFile("/api/admin/students/export_csv", "学生名单.csv")}
-          >
-            📥 导出名单
-          </Button>
-          <Button
-            size="sm"
             variant="success"
-            onClick={() => downloadFile("/api/admin/students/info/export", "学生报名信息.csv")}
+            onClick={() => downloadFile("/api/admin/students/info/export", "学生报名信息.xlsx")}
           >
             <FileDown className="h-4 w-4" />
             导出报名信息
