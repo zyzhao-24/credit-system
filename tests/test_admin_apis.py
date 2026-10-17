@@ -3,6 +3,44 @@
 from backend.utils.passwords import client_password_digest
 
 
+def test_student_list_and_otp_reset_for_system_admin(
+    app, database, seed_legacy_payload, minimal_payload, login
+):
+    """学生列表对系统管理员附带联系方式与 OTP 状态；可重置学生 OTP（不发邮件）。"""
+    seed_legacy_payload(minimal_payload)
+    client = app.test_client()
+    system = login("system", "adminpass", "admin")
+    normal = login("admin", "adminpass", "admin")
+
+    full = client.get("/api/admin/students", headers={"Authorization": system}).get_json()
+    student_row = next(s for s in full["students"] if s["student_id"] == "1001")
+    assert student_row["phone"] == "13800000000"
+    assert "has_otp" in student_row
+
+    # 普通管理员看不到联系方式
+    limited = client.get("/api/admin/students", headers={"Authorization": normal}).get_json()
+    assert all("phone" not in s for s in limited["students"])
+
+    # 重置学生 OTP：一次性返回二维码与密钥
+    reset = client.post(
+        "/api/admin/students/reset_otp",
+        json={"student_id": "1001"},
+        headers={"Authorization": system},
+    )
+    payload = reset.get_json()
+    assert payload["success"] is True
+    assert payload["otp_secret"]
+    assert payload["otp_qr"].startswith("data:image/png;base64,")
+
+    # 普通管理员无权重置
+    denied = client.post(
+        "/api/admin/students/reset_otp",
+        json={"student_id": "1001"},
+        headers={"Authorization": normal},
+    )
+    assert denied.status_code == 403
+
+
 def test_system_admin_role_is_reserved_for_builtin_account(
     app, database, seed_legacy_payload, minimal_payload, login
 ):

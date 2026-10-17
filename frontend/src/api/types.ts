@@ -137,6 +137,12 @@ export interface MyRegistration {
 export interface AdminStudent {
   student_id: string;
   name: string;
+  /** 以下字段仅系统管理员可见（联系方式、报名详情与 OTP 状态） */
+  phone?: string;
+  wechat?: string;
+  suggestion?: string;
+  updated_at?: string;
+  has_otp?: boolean;
 }
 
 export interface AdminCategory {
@@ -253,9 +259,6 @@ export interface AdminQuestionnaireTemplate {
   has_category_question: boolean;
   custom_questions: CustomQuestion[];
 }
-
-/** 管理端学生报名信息（与学生端档案同构）。 */
-export type AdminStudentInfo = StudentProfile;
 
 export type AdminQuestionnaire = AdminQuestionnaireTemplate;
 

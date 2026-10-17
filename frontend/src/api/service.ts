@@ -10,7 +10,6 @@ import type {
   AdminReport,
   AdminResponse,
   AdminStudent,
-  AdminStudentInfo,
   AllStudentCredits,
   AvailableQuestionnaire,
   BatchImportResult,
@@ -240,15 +239,6 @@ export async function changeStudentPasswordByAdmin(
 
 // ========== 管理端：学生报名信息 ==========
 
-export async function getAdminStudentInfos(): Promise<{
-  success: boolean;
-  students: AdminStudentInfo[];
-  total: number;
-}> {
-  const { data } = await api.get("/api/admin/students/info");
-  return data;
-}
-
 export async function updateAdminStudentInfo(payload: {
   student_id: string;
   phone: string;
@@ -256,6 +246,17 @@ export async function updateAdminStudentInfo(payload: {
   suggestion: string;
 }): Promise<BasicResponse> {
   const { data } = await api.put<BasicResponse>("/api/admin/students/info", payload);
+  return data;
+}
+
+/** 重置学生的 OTP，二维码/密钥一次性返回给管理员转交（不发邮件）。 */
+export async function resetStudentOtp(
+  studentId: string,
+): Promise<BasicResponse & Partial<AdminOtpBundle>> {
+  const { data } = await api.post<BasicResponse & Partial<AdminOtpBundle>>(
+    "/api/admin/students/reset_otp",
+    { student_id: studentId },
+  );
   return data;
 }
 
