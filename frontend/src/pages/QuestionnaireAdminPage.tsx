@@ -5,21 +5,18 @@ import { ChevronDown, ChevronRight, FileDown } from "lucide-react";
 import { downloadFile, errorMessage } from "@/api/client";
 import {
   createQuestionnaireTemplate,
-  deleteQuestionnaire,
   deleteQuestionnaireTemplate,
   deleteResponse,
   getActivityCategories,
   getAdminActivities,
   getAllQuestionnaires,
   getQuestionnaireResponses,
-  updateQuestionnaire,
   updateQuestionnaireTemplate,
   updateResponse,
 } from "@/api/service";
 import type {
   AdminActivity,
   AdminQuestionnaireTemplate,
-  AdminRegistrationItem,
   AdminResponse,
   CustomQuestion,
 } from "@/api/types";
@@ -27,7 +24,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { Input, Select, Textarea } from "@/components/ui/input";
+import { Input, Select } from "@/components/ui/input";
 import {
   Table,
   TableBody,
@@ -45,19 +42,14 @@ import { RegistrationBadge } from "@/components/StatusBadge";
 
 const PHONE_PATTERN = /^1[3-9]\d{9}$/;
 
-/** 问卷管理页（系统管理员）：注册问卷 + 活动问卷模板。 */
+/** 问卷管理页（系统管理员）：活动问卷模板。注册问卷已并入“学生管理”标签页。 */
 export function QuestionnaireAdminPage() {
   const navigate = useNavigate();
-  const [registrations, setRegistrations] = useState<AdminRegistrationItem[]>([]);
   const [templates, setTemplates] = useState<AdminQuestionnaireTemplate[]>([]);
   const [activities, setActivities] = useState<AdminActivity[]>([]);
-  const [regExpanded, setRegExpanded] = useState(false);
-  const [regSearch, setRegSearch] = useState("");
   const [actSearch, setActSearch] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [editTemplateTarget, setEditTemplateTarget] = useState<AdminQuestionnaireTemplate | null>(null);
-  const [editRegistrationTarget, setEditRegistrationTarget] = useState<AdminRegistrationItem | null>(null);
-  const [deleteRegistrationTarget, setDeleteRegistrationTarget] = useState<AdminRegistrationItem | null>(null);
   const [deleteTemplateTarget, setDeleteTemplateTarget] = useState<AdminQuestionnaireTemplate | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
@@ -65,11 +57,6 @@ export function QuestionnaireAdminPage() {
     getAllQuestionnaires()
       .then((data) => {
         if (data.success) {
-          setRegistrations(
-            data.questionnaires.filter(
-              (q): q is AdminRegistrationItem => q.questionnaire_type === "registration",
-            ),
-          );
           setTemplates(
             data.questionnaires.filter(
               (q): q is AdminQuestionnaireTemplate => q.questionnaire_type === "activity_template",
@@ -88,17 +75,6 @@ export function QuestionnaireAdminPage() {
   }, []);
 
   useEffect(load, [load, reloadKey]);
-
-  const regQuery = regSearch.trim().toLowerCase();
-  const filteredRegistrations = regQuery
-    ? registrations.filter(
-        (q) =>
-          q.student_id.toLowerCase().includes(regQuery) ||
-          q.name.toLowerCase().includes(regQuery) ||
-          (q.phone ?? "").includes(regQuery) ||
-          (q.wechat ?? "").toLowerCase().includes(regQuery),
-      )
-    : registrations;
 
   const actQuery = actSearch.trim().toLowerCase();
   const filteredTemplates = actQuery
@@ -120,67 +96,6 @@ export function QuestionnaireAdminPage() {
           </Button>
         }
       />
-
-      {/* 注册问卷 */}
-      <section className="mb-10">
-        <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
-          <button
-            className="flex items-center gap-1 text-xl font-semibold cursor-pointer"
-            onClick={() => setRegExpanded((prev) => !prev)}
-          >
-            {regExpanded ? <ChevronDown className="h-5 w-5" /> : <ChevronRight className="h-5 w-5" />}
-            注册问卷
-          </button>
-          <div className="flex gap-2">
-            <Input
-              value={regSearch}
-              onChange={(event) => setRegSearch(event.target.value)}
-              placeholder="搜索学号、姓名、手机号..."
-              className="w-64"
-            />
-            <Button
-              variant="success"
-              size="sm"
-              onClick={() =>
-                downloadFile("/api/admin/questionnaires/export?type=registration", "registration.csv")
-              }
-            >
-              <FileDown className="h-4 w-4" />
-              导出CSV
-            </Button>
-          </div>
-        </div>
-
-        {regExpanded ? (
-          <>
-            <div className="mb-4 rounded-lg border-l-4 border-primary bg-[#e3f2fd] px-3 py-3 text-sm">
-              <strong>统计：</strong>总数：{registrations.length}
-              {filteredRegistrations.length !== registrations.length ? (
-                <span className="ml-5">筛选结果：{filteredRegistrations.length}</span>
-              ) : null}
-            </div>
-            {filteredRegistrations.length === 0 ? (
-              <EmptyState
-                icon="📝"
-                text={registrations.length === 0 ? "暂无注册问卷" : "没有符合条件的记录"}
-              />
-            ) : (
-              filteredRegistrations.map((item) => (
-                <RegistrationCard
-                  key={item.questionnaire_id}
-                  item={item}
-                  onEdit={() => setEditRegistrationTarget(item)}
-                  onDelete={() => setDeleteRegistrationTarget(item)}
-                />
-              ))
-            )}
-          </>
-        ) : (
-          <div className="rounded-lg border-l-4 border-primary bg-[#e3f2fd] px-3 py-3 text-sm">
-            <strong>统计：</strong>总数：{registrations.length}
-          </div>
-        )}
-      </section>
 
       {/* 活动问卷模板 */}
       <section>
@@ -237,30 +152,6 @@ export function QuestionnaireAdminPage() {
         existing={editTemplateTarget ?? undefined}
         onDone={() => setReloadKey((key) => key + 1)}
       />
-      <EditRegistrationDialog
-        target={editRegistrationTarget}
-        onOpenChange={(open) => !open && setEditRegistrationTarget(null)}
-        onDone={() => setReloadKey((key) => key + 1)}
-      />
-      <ConfirmDialog
-        open={deleteRegistrationTarget !== null}
-        onOpenChange={(open) => !open && setDeleteRegistrationTarget(null)}
-        message="确定要删除这条问卷记录吗？"
-        onConfirm={async () => {
-          if (!deleteRegistrationTarget) return;
-          try {
-            const result = await deleteQuestionnaire(deleteRegistrationTarget.questionnaire_id);
-            if (result.success) {
-              toast.success("删除成功");
-              setReloadKey((key) => key + 1);
-            } else {
-              toast.error(result.message || "删除失败");
-            }
-          } catch (error) {
-            toast.error(errorMessage(error, "删除失败"));
-          }
-        }}
-      />
       <ConfirmDialog
         open={deleteTemplateTarget !== null}
         onOpenChange={(open) => !open && setDeleteTemplateTarget(null)}
@@ -281,148 +172,6 @@ export function QuestionnaireAdminPage() {
         }}
       />
     </div>
-  );
-}
-
-// ========== 注册问卷卡片 ==========
-
-function RegistrationCard({
-  item,
-  onEdit,
-  onDelete,
-}: {
-  item: AdminRegistrationItem;
-  onEdit: () => void;
-  onDelete: () => void;
-}) {
-  const [expanded, setExpanded] = useState(false);
-
-  return (
-    <Card className="mb-4">
-      <button className="w-full text-left cursor-pointer" onClick={() => setExpanded((prev) => !prev)}>
-        <div className="flex items-center justify-between">
-          <h3 className="font-semibold text-[#1976d2] flex items-center gap-1">
-            {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-            {item.student_id} - {item.name}
-          </h3>
-          <span className="text-sm text-[#666]">{item.submit_time}</span>
-        </div>
-      </button>
-      {expanded ? (
-        <div className="mt-4 border-t-2 border-[#e0e0e0] pt-4">
-          <div className="grid grid-cols-2 gap-4 mb-4 text-sm">
-            <div>
-              <strong>手机号：</strong>
-              {item.phone || "-"}
-            </div>
-            <div>
-              <strong>微信号：</strong>
-              {item.wechat || "-"}
-            </div>
-          </div>
-          <div className="mb-4 text-sm">
-            <strong>建议：</strong>
-            <div className="mt-1 rounded-md bg-[#f5f5f5] p-2.5 whitespace-pre-wrap break-words">
-              {item.suggestion || "无"}
-            </div>
-          </div>
-          <div className="flex gap-2">
-            <Button size="sm" variant="secondary" onClick={onEdit}>
-              编辑
-            </Button>
-            <Button size="sm" variant="danger" onClick={onDelete}>
-              删除
-            </Button>
-          </div>
-        </div>
-      ) : null}
-    </Card>
-  );
-}
-
-function EditRegistrationDialog({
-  target,
-  onOpenChange,
-  onDone,
-}: {
-  target: AdminRegistrationItem | null;
-  onOpenChange: (open: boolean) => void;
-  onDone: () => void;
-}) {
-  return (
-    <Dialog open={target !== null} onOpenChange={onOpenChange}>
-      <DialogContent title="编辑问卷">
-        {target ? (
-          <EditRegistrationForm target={target} onOpenChange={onOpenChange} onDone={onDone} />
-        ) : null}
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function EditRegistrationForm({
-  target,
-  onOpenChange,
-  onDone,
-}: {
-  target: AdminRegistrationItem;
-  onOpenChange: (open: boolean) => void;
-  onDone: () => void;
-}) {
-  const [phone, setPhone] = useState(target.phone || "");
-  const [wechat, setWechat] = useState(target.wechat || "");
-  const [suggestion, setSuggestion] = useState(target.suggestion || "");
-
-  const submit = async () => {
-    if (phone.trim() && !PHONE_PATTERN.test(phone.trim())) {
-      toast.error("请输入正确的11位手机号码");
-      return;
-    }
-    try {
-      const result = await updateQuestionnaire({
-        questionnaire_id: target.questionnaire_id,
-        phone: phone.trim(),
-        wechat: wechat.trim(),
-        suggestion: suggestion.trim(),
-      });
-      if (result.success) {
-        toast.success("保存成功");
-        onOpenChange(false);
-        onDone();
-      } else {
-        toast.error(result.message || "保存失败");
-      }
-    } catch (error) {
-      toast.error(errorMessage(error, "保存失败"));
-    }
-  };
-
-  return (
-    <>
-      <Field label="学号（只读）">
-        <Input value={target.student_id} readOnly />
-      </Field>
-      <Field label="姓名（只读）">
-        <Input value={target.name} readOnly />
-      </Field>
-      <Field label="手机号">
-        <Input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />
-      </Field>
-      <Field label="微信号">
-        <Input value={wechat} onChange={(e) => setWechat(e.target.value)} />
-      </Field>
-      <Field label="建议">
-        <Textarea rows={3} value={suggestion} onChange={(e) => setSuggestion(e.target.value)} />
-      </Field>
-      <div className="flex gap-3 mt-2">
-        <Button className="flex-1" onClick={submit}>
-          保存
-        </Button>
-        <Button variant="secondary" className="flex-1" onClick={() => onOpenChange(false)}>
-          取消
-        </Button>
-      </div>
-    </>
   );
 }
 

@@ -1,19 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { downloadFile, errorMessage } from "@/api/client";
+import { errorMessage } from "@/api/client";
 import {
-  batchImportStudents,
-  changeStudentPasswordByAdmin,
   createAdmin,
   createCategory,
   createDepartment,
-  createStudent,
   deleteAdmin,
   deleteCategory,
   deleteDepartment,
-  deleteStudent,
   getAdminCategories,
-  getAdminStudents,
   getAdmins,
   getDepartments,
   getEmailConfig,
@@ -24,12 +19,12 @@ import {
   updateAdmin,
 } from "@/api/service";
 import { useAuth } from "@/auth/auth-context";
-import type { AdminAccount, AdminCategory, AdminStudent, EmailConfig } from "@/api/types";
+import type { AdminAccount, AdminCategory, EmailConfig } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
-import { Input, Select, Textarea } from "@/components/ui/input";
+import { Input, Select } from "@/components/ui/input";
 import {
   Table,
   TableBody,
@@ -41,327 +36,18 @@ import {
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Field } from "@/components/common";
 
-interface SettingsSectionProps {
-  /** 普通管理员：只显示只读学生列表 */
-  readOnlyStudentsOnly?: boolean;
-}
-
-/** 系统设置标签页：学生、类别、总学分、邮箱、部门、管理员账号。 */
-export function SettingsSection({ readOnlyStudentsOnly = false }: SettingsSectionProps) {
+/** 系统设置标签页（仅系统管理员）：类别、总学分、邮箱、部门、管理员账号。 */
+export function SettingsSection() {
   const { user } = useAuth();
-  const isSystemAdmin = user?.role === "system_admin";
 
   return (
     <div className="flex flex-col gap-8">
-      <StudentsBlock canEdit={isSystemAdmin && !readOnlyStudentsOnly} />
-      {isSystemAdmin && !readOnlyStudentsOnly ? (
-        <>
-          <CategoriesBlock />
-          <TotalCreditsBlock />
-          <EmailConfigBlock />
-          <DepartmentsBlock />
-          <AdminsBlock currentAdminId={user?.sub ?? ""} />
-        </>
-      ) : null}
+      <CategoriesBlock />
+      <TotalCreditsBlock />
+      <EmailConfigBlock />
+      <DepartmentsBlock />
+      <AdminsBlock currentAdminId={user?.sub ?? ""} />
     </div>
-  );
-}
-
-// ========== 学生管理 ==========
-
-function StudentsBlock({ canEdit }: { canEdit: boolean }) {
-  const [students, setStudents] = useState<AdminStudent[]>([]);
-  const [search, setSearch] = useState("");
-  const [addOpen, setAddOpen] = useState(false);
-  const [batchOpen, setBatchOpen] = useState(false);
-  const [passwordTarget, setPasswordTarget] = useState<AdminStudent | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<AdminStudent | null>(null);
-
-  const load = useCallback(() => {
-    getAdminStudents()
-      .then((data) => {
-        if (data.success) setStudents(data.students);
-      })
-      .catch((error) => toast.error(errorMessage(error, "加载学生失败")));
-  }, []);
-
-  useEffect(load, [load]);
-
-  const query = search.trim().toLowerCase();
-  const filtered = query
-    ? students.filter(
-        (student) =>
-          student.student_id.toLowerCase().includes(query) ||
-          student.name.toLowerCase().includes(query),
-      )
-    : students;
-
-  return (
-    <section>
-      <h2 className="text-xl font-semibold mb-3">学生管理</h2>
-      {canEdit ? (
-        <div className="flex flex-wrap gap-2 mb-3">
-          <Button size="sm" onClick={() => setAddOpen(true)}>
-            ➕ 添加学生
-          </Button>
-          <Button size="sm" variant="secondary" onClick={() => setBatchOpen(true)}>
-            📋 批量导入
-          </Button>
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => downloadFile("/api/admin/students/export_csv", "学生名单.csv")}
-          >
-            📥 导出CSV
-          </Button>
-        </div>
-      ) : null}
-      <Input
-        value={search}
-        onChange={(event) => setSearch(event.target.value)}
-        placeholder="搜索学号或姓名..."
-        className="max-w-xs mb-3"
-      />
-      <Card className="p-0 overflow-hidden">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>学号</TableHead>
-              <TableHead>姓名</TableHead>
-              {canEdit ? <TableHead>操作</TableHead> : null}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filtered.map((student) => (
-              <TableRow key={student.student_id}>
-                <TableCell>{student.student_id}</TableCell>
-                <TableCell>{student.name}</TableCell>
-                {canEdit ? (
-                  <TableCell>
-                    <div className="flex gap-2">
-                      <Button size="sm" variant="secondary" onClick={() => setPasswordTarget(student)}>
-                        修改密码
-                      </Button>
-                      <Button size="sm" variant="danger" onClick={() => setDeleteTarget(student)}>
-                        删除
-                      </Button>
-                    </div>
-                  </TableCell>
-                ) : null}
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </Card>
-
-      <AddStudentDialog open={addOpen} onOpenChange={setAddOpen} onDone={load} />
-      <BatchStudentDialog open={batchOpen} onOpenChange={setBatchOpen} onDone={load} />
-      <ChangeStudentPasswordDialog
-        target={passwordTarget}
-        onOpenChange={(open) => !open && setPasswordTarget(null)}
-      />
-      <ConfirmDialog
-        open={deleteTarget !== null}
-        onOpenChange={(open) => !open && setDeleteTarget(null)}
-        message="确定删除该学生？学生的学分记录将被保留。"
-        onConfirm={async () => {
-          if (!deleteTarget) return;
-          try {
-            const result = await deleteStudent(deleteTarget.student_id);
-            if (result.success) {
-              toast.success(result.message || "已删除");
-              load();
-            } else {
-              toast.error(result.message || "删除失败");
-            }
-          } catch (error) {
-            toast.error(errorMessage(error, "删除失败"));
-          }
-        }}
-      />
-    </section>
-  );
-}
-
-function AddStudentDialog({
-  open,
-  onOpenChange,
-  onDone,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onDone: () => void;
-}) {
-  const [studentId, setStudentId] = useState("");
-  const [name, setName] = useState("");
-  const [password, setPassword] = useState("123456");
-
-  const submit = async () => {
-    try {
-      const result = await createStudent({ student_id: studentId.trim(), name: name.trim(), password });
-      if (result.success) {
-        toast.success(result.message || "添加成功");
-        onOpenChange(false);
-        setStudentId("");
-        setName("");
-        setPassword("123456");
-        onDone();
-      } else {
-        toast.error(result.message || "添加失败");
-      }
-    } catch (error) {
-      toast.error(errorMessage(error, "添加失败"));
-    }
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent title="添加学生">
-        <Field label="学号" required>
-          <Input value={studentId} onChange={(e) => setStudentId(e.target.value)} />
-        </Field>
-        <Field label="姓名" required>
-          <Input value={name} onChange={(e) => setName(e.target.value)} />
-        </Field>
-        <Field label="密码（默认123456）">
-          <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-        </Field>
-        <div className="flex gap-3 mt-2">
-          <Button className="flex-1" onClick={submit}>
-            添加
-          </Button>
-          <Button variant="secondary" className="flex-1" onClick={() => onOpenChange(false)}>
-            取消
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function BatchStudentDialog({
-  open,
-  onOpenChange,
-  onDone,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onDone: () => void;
-}) {
-  const [csvData, setCsvData] = useState("");
-
-  const submit = async () => {
-    try {
-      const result = await batchImportStudents(csvData);
-      if (result.success) {
-        toast.success(
-          `导入成功！新增: ${result.added}, 更新: ${result.updated}${
-            result.errors.length > 0 ? `；错误: ${result.errors.join(", ")}` : ""
-          }`,
-        );
-        onOpenChange(false);
-        setCsvData("");
-        onDone();
-      } else {
-        toast.error(result.message || "导入失败");
-      }
-    } catch (error) {
-      toast.error(errorMessage(error, "导入失败"));
-    }
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent title="批量导入学生">
-        <p className="text-sm">格式：学号,姓名,密码（每行一个学生，无表头）</p>
-        <p className="text-xs text-[#616161] mt-1 mb-3 leading-relaxed">
-          • 学号只能包含数字（可含前导零）
-          <br />• 密码可省略，默认为 123456
-          <br />• 已有学生只有填写第三列密码才会更新密码
-        </p>
-        <Field label="学生数据">
-          <Textarea
-            rows={10}
-            value={csvData}
-            onChange={(event) => setCsvData(event.target.value)}
-            placeholder={"学号,姓名,密码\n2021001,张三,123456\n2021002,李四,123456"}
-          />
-        </Field>
-        <div className="flex gap-3 mt-2">
-          <Button className="flex-1" onClick={submit}>
-            导入
-          </Button>
-          <Button variant="secondary" className="flex-1" onClick={() => onOpenChange(false)}>
-            取消
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function ChangeStudentPasswordDialog({
-  target,
-  onOpenChange,
-}: {
-  target: AdminStudent | null;
-  onOpenChange: (open: boolean) => void;
-}) {
-  return (
-    <Dialog open={target !== null} onOpenChange={onOpenChange}>
-      <DialogContent title="修改学生密码">
-        {target ? (
-          <ChangeStudentPasswordForm target={target} onOpenChange={onOpenChange} />
-        ) : null}
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function ChangeStudentPasswordForm({
-  target,
-  onOpenChange,
-}: {
-  target: AdminStudent;
-  onOpenChange: (open: boolean) => void;
-}) {
-  const [password, setPassword] = useState("");
-
-  const submit = async () => {
-    if (!password) {
-      toast.error("请输入新密码");
-      return;
-    }
-    try {
-      const result = await changeStudentPasswordByAdmin(target.student_id, password);
-      if (result.success) {
-        toast.success("密码修改成功");
-        onOpenChange(false);
-      } else {
-        toast.error(result.message || "修改失败");
-      }
-    } catch (error) {
-      toast.error(errorMessage(error, "修改失败"));
-    }
-  };
-
-  return (
-    <>
-      <Field label="学号">
-        <Input value={target.student_id} readOnly />
-      </Field>
-      <Field label="新密码" required>
-        <Input value={password} onChange={(e) => setPassword(e.target.value)} />
-      </Field>
-      <div className="flex gap-3 mt-2">
-        <Button className="flex-1" onClick={submit}>
-          修改
-        </Button>
-        <Button variant="secondary" className="flex-1" onClick={() => onOpenChange(false)}>
-          取消
-        </Button>
-      </div>
-    </>
   );
 }
 
