@@ -14,9 +14,8 @@ cp .env.example .env   # 编辑 SECRET_KEY（生产必须）
 # 3. 初始化管理员（确保内置 system 账号存在；首次创建时随机生成密码并打印一次）
 python init_admin.py
 
-# 3b. 首次部署必须设置 system 的密码与 OTP（登录强制两步验证）
-python manage.py reset-system-password    # 不传参数则生成随机强密码并打印一次
-python manage.py reset-system-otp         # 打印密钥并保存二维码到 var/
+# 3b. 首次部署后设置 system 的密码与 OTP（登录强制两步验证）：
+#     启动服务后在服务器本机用浏览器访问 http://localhost:5000/local/system
 
 # 4. 构建前端
 cd frontend && npm install && npm run build && cd ..
@@ -63,10 +62,10 @@ cd frontend && npm run dev
 - **管理员**：无邮箱，创建账号时接口一次性返回二维码与 Base32 密钥（仅本次可见）；
   系统管理员可在后台“重置 OTP”普通管理员的绑定。
 - **system 账号**：内置固定存在且是唯一的系统管理员，接口禁止创建/删除/修改它，
-  也不允许再创建或提升其他 `system_admin`；首次启动建号时随机生成密码并打印一次，
-  之后密码与 OTP 只能通过服务器本地命令维护（`manage.py reset-system-password` /
-  `reset-system-otp`），任意账号也可用 `manage.py set-otp <student|admin> <账号>`
-  离线重新绑定（不发邮件）。
+  也不允许再创建或提升其他 `system_admin`；首次启动建号时随机生成密码并打印一次。
+  其密码与 OTP 通过**本机专用维护页**维护：在服务器本机访问
+  `http://localhost:5000/local/system`（非本机访问返回 404，表单带签名令牌防跨站提交，
+  密码只能随机生成、仅显示一次）。无头服务器可选 manage.py 命令完成同样操作。
 
 ## 核心功能
 

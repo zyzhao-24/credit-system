@@ -574,7 +574,7 @@ function AdminsBlock({ currentAdminId }: { currentAdminId: string }) {
                   <TableCell>
                     {isBuiltin ? (
                       <span className="text-[13px] text-[#888]">
-                        内置账号，密码与 OTP 请用 manage.py 维护
+                        内置账号，密码与 OTP 请在服务器本机访问 /local/system 维护
                       </span>
                     ) : (
                       <div className="flex flex-wrap gap-2">

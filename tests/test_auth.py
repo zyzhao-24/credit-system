@@ -94,7 +94,7 @@ def test_unbound_admin_cannot_self_bind_via_login(app, database, seed_legacy_pay
 
     step1 = _step1(client, "system", "adminpass", "admin")
     assert step1.status_code == 403
-    assert "manage.py" in step1.get_json()["message"]
+    assert "/local/system" in step1.get_json()["message"]
 
 
 def test_wrong_password_is_rejected(app, database, seed_legacy_payload, minimal_payload):

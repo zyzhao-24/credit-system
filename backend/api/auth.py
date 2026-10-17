@@ -144,9 +144,10 @@ def _otp_required_response(account: Student | Admin, user_type: str):
                     "message": message,
                 }
             )
-        # Admin without OTP: only the CLI (manage.py) may bind one.
+        # Admin without OTP: only the localhost console may bind one.
         return _json_error(
-            "该管理员账号尚未绑定动态验证码，请使用服务器上的 manage.py 初始化 OTP",
+            "该管理员账号尚未绑定动态验证码，请联系系统管理员重置；"
+            "system 账号请在服务器本机访问 http://localhost:5000/local/system 初始化",
             403,
         )
     ticket = _issue_otp_ticket(account, user_type)

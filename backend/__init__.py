@@ -95,11 +95,12 @@ def _ensure_system_admin(app: Flask) -> None:
             )
             db.session.commit()
             message = (
-                "已创建内置 system 管理员，初始密码（仅显示这一次，"
-                "也可用 manage.py reset-system-password 重置）: " + password
+                "已创建内置 system 管理员，初始密码（仅显示这一次）: " + password
             )
+            hint = "system 的密码与 OTP 可在服务器本机访问 http://localhost:5000/local/system 维护"
             print(message, flush=True)
-            app.logger.warning(message)
+            print(hint, flush=True)
+            app.logger.warning("%s；%s", message, hint)
         elif admin.role != "system_admin":
             admin.role = "system_admin"
             db.session.commit()
@@ -128,6 +129,7 @@ def create_app(config_object: type[Config] | None = None, **overrides) -> Flask:
     from backend.api.admin_students import admin_students_bp
     from backend.api.admin_questionnaires import admin_questionnaires_bp
     from backend.api.admin_reports import admin_reports_bp
+    from backend.api.local_admin import local_admin_bp
     from backend.api.questionnaires import questionnaires_bp
     from backend.api.student import student_bp
 
@@ -137,6 +139,7 @@ def create_app(config_object: type[Config] | None = None, **overrides) -> Flask:
     app.register_blueprint(admin_students_bp)
     app.register_blueprint(admin_questionnaires_bp)
     app.register_blueprint(admin_reports_bp)
+    app.register_blueprint(local_admin_bp)
     app.register_blueprint(questionnaires_bp)
     app.register_blueprint(student_bp)
 
