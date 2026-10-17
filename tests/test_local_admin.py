@@ -2,9 +2,10 @@
 
 import re
 
-from backend.models import Admin
+from backend.models import Admin, EmailConfig
 from backend.services.otp_service import has_totp
 from backend.utils.passwords import client_password_digest, verify_password_digest
+from mailstub import SENT_MAIL
 
 TOKEN_PATTERN = re.compile(r'form_token" value="([^"]+)"')
 
@@ -56,3 +57,57 @@ def test_console_reset_password_and_otp(app, database):
     assert "data:image/png;base64," in html
     database.session.refresh(admin)
     assert has_totp(admin)
+
+
+def test_console_email_config_only_available_here(app, database):
+    client = app.test_client()
+
+    # 邮件配置 API 已不存在：信息只能出现在本机维护页
+    # （POST 命中 SPA 兜底路由的方法限制返回 405，也算端点已移除）
+    assert client.get("/api/admin/email_config").status_code == 404
+    assert client.post("/api/admin/test_email", json={}).status_code in {404, 405}
+
+    token = _form_token(client)
+    saved = client.post(
+        "/local/system/email-config",
+        data={
+            "form_token": token,
+            "service_email": "service@example.com",
+            "service_email_password": "smtp-secret",
+            "student_email_suffix": "@stu.example.com",
+        },
+    )
+    assert saved.status_code == 200
+
+    config = database.session.get(EmailConfig, 1)
+    assert config.service_email == "service@example.com"
+    assert config.student_email_suffix == "@stu.example.com"
+
+    # 页面上能看到明文密码（仅此页面）
+    page = client.get("/local/system").get_data(as_text=True)
+    assert "service@example.com" in page
+    assert "smtp-secret" in page
+
+    # 测试邮件走打桩通道，不真实发送
+    token = _form_token(client)
+    sent = client.post(
+        "/local/system/test-email",
+        data={"form_token": token, "test_email": "someone@example.com"},
+    )
+    assert sent.status_code == 200
+    assert "发送成功" in sent.get_data(as_text=True)
+    assert any(mail["to"] == "someone@example.com" for mail in SENT_MAIL)
+
+    # 留空密码保持不变
+    token = _form_token(client)
+    client.post(
+        "/local/system/email-config",
+        data={
+            "form_token": token,
+            "service_email": "service@example.com",
+            "service_email_password": "",
+            "student_email_suffix": "@stu.example.com",
+        },
+    )
+    page = client.get("/local/system").get_data(as_text=True)
+    assert "smtp-secret" in page

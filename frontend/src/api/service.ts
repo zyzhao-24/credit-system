@@ -18,7 +18,6 @@ import type {
   CreditReport,
   CustomAnswers,
   CustomQuestion,
-  EmailConfig,
   LoginStepOneResponse,
   MyRegistration,
   StudentActivities,
@@ -295,28 +294,6 @@ export async function saveTotalCredits(totalRequiredCredits: number): Promise<Ba
   const { data } = await api.post<BasicResponse>("/api/admin/total_credits", {
     total_required_credits: totalRequiredCredits,
   });
-  return data;
-}
-
-export async function getEmailConfig(): Promise<{ success: boolean; email_config: EmailConfig }> {
-  const { data } = await api.get("/api/admin/email_config");
-  return data;
-}
-
-export async function saveEmailConfig(payload: {
-  service_email: string;
-  service_email_password: string;
-  student_email_suffix: string;
-}): Promise<BasicResponse> {
-  const { data } = await api.post<BasicResponse>("/api/admin/email_config", payload);
-  return data;
-}
-
-export async function sendTestEmail(
-  testEmail: string,
-  debug: boolean,
-): Promise<BasicResponse & { debug_info?: string[] }> {
-  const { data } = await api.post("/api/admin/test_email", { test_email: testEmail, debug });
   return data;
 }
 

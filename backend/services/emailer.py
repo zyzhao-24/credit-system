@@ -50,7 +50,7 @@ def send_email(
 ) -> tuple[bool, str]:
     config, password = get_email_config()
     if config is None or not config.service_email or not password:
-        return False, "邮箱配置不完整，请在系统设置中配置服务邮箱"
+        return False, "邮箱配置不完整，请在服务器本机访问 /local/system 配置服务邮箱"
 
     profile = smtp_profile(config.service_email)
     try:

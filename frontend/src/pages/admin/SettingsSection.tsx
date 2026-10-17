@@ -11,19 +11,15 @@ import {
   getAdminCategories,
   getAdmins,
   getDepartments,
-  getEmailConfig,
   getTotalCredits,
   resetAdminOtp,
-  saveEmailConfig,
   saveTotalCredits,
-  sendTestEmail,
   updateAdmin,
 } from "@/api/service";
 import { useAuth } from "@/auth/auth-context";
-import type { AdminAccount, AdminCategory, AdminOtpBundle, EmailConfig } from "@/api/types";
+import type { AdminAccount, AdminCategory, AdminOtpBundle } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Input, Select } from "@/components/ui/input";
 import {
@@ -37,7 +33,8 @@ import {
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Field } from "@/components/common";
 
-/** 系统设置标签页（仅系统管理员）：类别、总学分、邮箱、部门、管理员账号。 */
+/** 系统设置标签页（仅系统管理员）：类别、总学分、部门、管理员账号。
+ *  邮件服务配置已移至本机专用维护页 /local/system，不在此出现。 */
 export function SettingsSection() {
   const { user } = useAuth();
 
@@ -45,7 +42,6 @@ export function SettingsSection() {
     <div className="flex flex-col gap-8">
       <CategoriesBlock />
       <TotalCreditsBlock />
-      <EmailConfigBlock />
       <DepartmentsBlock />
       <AdminsBlock currentAdminId={user?.sub ?? ""} />
     </div>
@@ -204,197 +200,6 @@ function TotalCreditsBlock() {
         </Button>
       </div>
     </section>
-  );
-}
-
-// ========== 邮箱配置 ==========
-
-function EmailConfigBlock() {
-  const [config, setConfig] = useState<EmailConfig | null>(null);
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [suffix, setSuffix] = useState("");
-  const [showSavedPassword, setShowSavedPassword] = useState(false);
-  const [testOpen, setTestOpen] = useState(false);
-
-  useEffect(() => {
-    getEmailConfig()
-      .then((data) => {
-        if (data.success) {
-          setConfig(data.email_config);
-          setEmail(data.email_config.service_email || "");
-          setSuffix(data.email_config.student_email_suffix || "");
-        }
-      })
-      .catch((error) => toast.error(errorMessage(error, "加载邮箱配置失败")));
-  }, []);
-
-  const save = async () => {
-    const trimmedEmail = email.trim();
-    const trimmedSuffix = suffix.trim();
-    if (trimmedEmail && !trimmedEmail.includes("@")) {
-      toast.error("请输入有效的服务邮箱地址");
-      return;
-    }
-    if (trimmedSuffix && !trimmedSuffix.startsWith("@")) {
-      toast.error("学生邮箱后缀应以@开头，如：@example.com");
-      return;
-    }
-    try {
-      const result = await saveEmailConfig({
-        service_email: trimmedEmail,
-        service_email_password: password,
-        student_email_suffix: trimmedSuffix,
-      });
-      if (result.success) {
-        toast.success("邮箱配置保存成功");
-        if (password) {
-          setConfig((prev) =>
-            prev ? { ...prev, has_password: true, service_email_password: password } : prev,
-          );
-        }
-        setPassword("");
-      } else {
-        toast.error(result.message || "保存失败");
-      }
-    } catch (error) {
-      toast.error(errorMessage(error, "保存失败"));
-    }
-  };
-
-  const savedPassword = config?.service_email_password ?? "";
-
-  return (
-    <section>
-      <h2 className="text-xl font-semibold mb-3">邮箱配置</h2>
-      <Card>
-        <Field label="服务邮箱">
-          <Input
-            type="email"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            placeholder="用于发送密码重置邮件"
-          />
-        </Field>
-        {config?.has_password ? (
-          <Field label="当前已保存的密码/授权码">
-            <div className="flex gap-2">
-              <Input
-                type={showSavedPassword ? "text" : "password"}
-                value={savedPassword}
-                readOnly
-                className="flex-1 bg-[#f5f5f5]"
-              />
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => setShowSavedPassword((v) => !v)}
-              >
-                {showSavedPassword ? "隐藏" : "显示"}
-              </Button>
-            </div>
-          </Field>
-        ) : null}
-        <Field label="服务邮箱密码/授权码">
-          <Input
-            type="password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            placeholder={
-              config?.has_password ? "输入新值以更改，留空保持不变" : "邮箱密码或SMTP授权码"
-            }
-          />
-        </Field>
-        <Field label="学生邮箱后缀">
-          <Input
-            value={suffix}
-            onChange={(event) => setSuffix(event.target.value)}
-            placeholder="如：@example.com"
-          />
-        </Field>
-        <div className="flex gap-3 items-center">
-          <Button onClick={save}>保存邮箱配置</Button>
-          <Button variant="secondary" onClick={() => setTestOpen(true)}>
-            测试邮箱配置
-          </Button>
-        </div>
-        <p className="text-sm text-[#666] mt-2">💡 提示：QQ邮箱需使用授权码，163邮箱需开启SMTP服务</p>
-        <p className="text-sm text-danger mt-1">⚠️ 注意：Outlook个人邮箱已禁用SMTP，建议使用QQ或163邮箱</p>
-      </Card>
-      <TestEmailDialog open={testOpen} onOpenChange={setTestOpen} />
-    </section>
-  );
-}
-
-function TestEmailDialog({
-  open,
-  onOpenChange,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}) {
-  const [address, setAddress] = useState("");
-  const [debug, setDebug] = useState(false);
-  const [debugInfo, setDebugInfo] = useState<string[]>([]);
-  const [sending, setSending] = useState(false);
-
-  const send = async () => {
-    const trimmed = address.trim();
-    if (!trimmed) return toast.error("请输入测试邮箱地址");
-    if (!trimmed.includes("@")) return toast.error("请输入有效的邮箱地址");
-    setSending(true);
-    setDebugInfo([]);
-    try {
-      const result = await sendTestEmail(trimmed, debug);
-      if (debug && result.debug_info) {
-        setDebugInfo(result.debug_info);
-      }
-      if (result.success) {
-        toast.success(result.message || "发送成功");
-        if (!debug) onOpenChange(false);
-      } else {
-        toast.error(result.message || "测试失败");
-      }
-    } catch (error) {
-      toast.error(errorMessage(error, "测试失败"));
-    } finally {
-      setSending(false);
-    }
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent title="测试邮箱配置">
-        <p className="text-sm text-[#666] -mt-2 mb-4">发送测试邮件以验证邮箱配置是否正确</p>
-        <Field label="测试邮箱地址" required>
-          <Input
-            type="email"
-            value={address}
-            onChange={(event) => setAddress(event.target.value)}
-            placeholder="输入接收测试邮件的邮箱"
-          />
-        </Field>
-        <label className="flex items-center gap-2 cursor-pointer text-sm mb-4">
-          <Checkbox checked={debug} onCheckedChange={(checked) => setDebug(checked === true)} />
-          <span>显示调试信息</span>
-        </label>
-        <div className="flex gap-3">
-          <Button className="flex-1" onClick={send} disabled={sending}>
-            {sending ? "发送中..." : "发送测试邮件"}
-          </Button>
-          <Button variant="secondary" className="flex-1" onClick={() => onOpenChange(false)}>
-            取消
-          </Button>
-        </div>
-        {debugInfo.length > 0 ? (
-          <div className="mt-5 max-h-[300px] overflow-y-auto rounded-md bg-[#f5f5f5] p-3 font-mono text-xs">
-            {debugInfo.map((line, index) => (
-              <div key={index}>{line}</div>
-            ))}
-          </div>
-        ) : null}
-      </DialogContent>
-    </Dialog>
   );
 }
 

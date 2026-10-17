@@ -90,7 +90,12 @@ cd frontend && npm run dev
 - 管理员账号管理
 - 部门管理
 - 类别和总学分设置
-- 邮箱配置
+
+### 本机维护页（仅服务器 localhost 可访问）
+
+`/local/system`：system 密码重置、system OTP 重置、邮件服务配置
+（SMTP 账号/明文密码/学生邮箱后缀）与测试发送。**这三类信息只出现在此页面**，
+Web 管理后台不提供邮箱配置入口。
 
 ## 技术栈
 
@@ -125,6 +130,9 @@ cd frontend && npm run dev
   明文 HTTP 下摘要和 JWT 都可能被嗅探重放。
 - SMTP 密码使用由 `SECRET_KEY` 派生的 Fernet 密钥加密存储；更换 `SECRET_KEY`
   会使已保存的 SMTP 密码无法解密，需要重新录入。
+- 邮件服务配置与 system 密码/OTP 只出现在本机维护页 `/local/system`；
+  若部署到同机反向代理之后，务必在代理层拦截该路径（否则所有请求的
+  `remote_addr` 都是回环地址，本机限制会失效）。
 
 ## 文档
 

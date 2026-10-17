@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-from flask import Blueprint, current_app, g, jsonify, request
+from flask import Blueprint, g, jsonify, request
 from sqlalchemy import func
 
 from backend.auth.decorators import require_admin, require_system_admin
 from backend.extensions import db
-from backend.models import Activity, ActivityAllowedEditor, Admin, Category, Department, EmailConfig, Setting
-from backend.services.emailer import send_test_email
+from backend.models import Activity, ActivityAllowedEditor, Admin, Category, Department, Setting
 from backend.services.otp_service import bind_new_totp, has_totp
-from backend.utils.crypto import decrypt_secret, encrypt_secret
 from backend.utils.otp import qr_png_data_uri
 from backend.utils.passwords import client_password_digest, hash_password_digest
 
@@ -98,57 +96,6 @@ def manage_total_credits():
     setting.value = str(data.get("total_required_credits", 0))
     db.session.commit()
     return jsonify({"success": True})
-
-
-@admin_settings_bp.route("/api/admin/email_config", methods=["GET", "POST"])
-@require_system_admin
-def manage_email_config():
-    config = db.session.get(EmailConfig, 1)
-    if config is None:
-        config = EmailConfig(id=1)
-        db.session.add(config)
-        db.session.flush()
-
-    if request.method == "GET":
-        # SMTP 密码是 Fernet 可逆加密存储，系统管理员可以查看明文
-        password = decrypt_secret(
-            config.service_email_password_encrypted,
-            current_app.config["SECRET_KEY"],
-        )
-        return jsonify(
-            {
-                "success": True,
-                "email_config": {
-                    "service_email": config.service_email,
-                    "student_email_suffix": config.student_email_suffix,
-                    "has_password": bool(config.service_email_password_encrypted),
-                    "service_email_password": password,
-                },
-            }
-        )
-
-    data = request.get_json(silent=True) or {}
-    config.service_email = data.get("service_email", "")
-    config.student_email_suffix = data.get("student_email_suffix", "")
-    if data.get("service_email_password"):
-        config.service_email_password_encrypted = encrypt_secret(
-            data["service_email_password"], current_app.config["SECRET_KEY"]
-        )
-    db.session.commit()
-    return jsonify({"success": True})
-
-
-@admin_settings_bp.post("/api/admin/test_email")
-@require_system_admin
-def test_email_config():
-    data = request.get_json(silent=True) or {}
-    test_email = data.get("test_email", "")
-    debug = bool(data.get("debug", False))
-    if not test_email:
-        return _error("请输入测试邮箱地址")
-    success, message, debug_info = send_test_email(test_email, debug)
-    status = 200
-    return jsonify({"success": success, "message": message, "debug_info": debug_info}), status
 
 
 @admin_settings_bp.route("/api/admin/departments", methods=["GET", "POST", "DELETE"])

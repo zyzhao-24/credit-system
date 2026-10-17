@@ -144,14 +144,6 @@ export interface AdminCategory {
   required_credits: number;
 }
 
-export interface EmailConfig {
-  service_email: string;
-  student_email_suffix: string;
-  has_password: boolean;
-  /** 已保存的 SMTP 密码明文（仅系统管理员可见） */
-  service_email_password?: string;
-}
-
 export interface AdminAccount {
   admin_id: string;
   role: string;
