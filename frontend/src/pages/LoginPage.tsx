@@ -12,7 +12,7 @@ import {
   sendRegistrationCode,
   verifyOtpCode,
 } from "@/api/service";
-import { isOtpRequired, type OtpBindChallenge } from "@/api/types";
+import { isOtpRequired, isOtpSetupRequired, type OtpBindChallenge } from "@/api/types";
 import { useAuth } from "@/auth/auth-context";
 import { sha256Hex } from "@/lib/sha256";
 import { Button } from "@/components/ui/button";
@@ -54,6 +54,11 @@ export function LoginPage() {
         setOtpTicket(result.otp_ticket);
         setOtpHint(result.message);
         setOtpCode("");
+        return;
+      }
+      if (isOtpSetupRequired(result)) {
+        // 学生端不会走到这里（未绑定的学生由邮件自动下发），防御性提示
+        setMessage(result.message);
         return;
       }
       finishLogin(result, username.trim());

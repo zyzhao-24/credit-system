@@ -149,11 +149,23 @@ def _otp_required_response(account: Student | Admin, user_type: str):
                     "message": message,
                 }
             )
-        # Admin without OTP: only the localhost console may bind one.
-        return _json_error(
-            "该管理员账号尚未绑定动态验证码，请联系系统管理员重置；"
-            "system 账号请在服务器本机访问 http://localhost:5000/local/system 初始化",
-            403,
+        # system 账号只能在服务器本机 /local/system 绑定
+        if account.admin_id == "system":
+            return _json_error(
+                "system 账号尚未绑定动态验证码，请在服务器本机访问 "
+                "http://localhost:5000/local/system 完成初始化",
+                403,
+            )
+        # 普通管理员（无邮箱）：密码验证通过后直接展示二维码自助绑定，
+        # 验证码确认后一并签发登录令牌
+        ticket, candidate = begin_pending_otp(account, "admin", "login_bind")
+        return jsonify(
+            {
+                "success": True,
+                "otp_setup_required": True,
+                "otp_bind": pending_otp_bundle(ticket, candidate, account.admin_id),
+                "message": "首次登录需要绑定动态验证码（OTP）",
+            }
         )
     ticket = _issue_otp_ticket(account, user_type)
     return jsonify(
@@ -465,6 +477,11 @@ def confirm_otp_bind():
     except Exception:
         db.session.rollback()
         raise
+    if claims.get("purpose") == "login_bind":
+        # 登录途中的首次绑定：密码已在第一步验证，绑定成功即完成登录
+        return jsonify(
+            {"success": True, "message": "动态验证码绑定成功", **_token_payload(_identity_for(account, user_type))}
+        )
     return jsonify({"success": True, "message": "动态验证码绑定成功"})
 
 

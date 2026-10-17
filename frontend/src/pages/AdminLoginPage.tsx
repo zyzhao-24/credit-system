@@ -1,13 +1,15 @@
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
 import { Shield } from "lucide-react";
+import { toast } from "sonner";
 import { errorMessage } from "@/api/client";
-import { loginWithToken, verifyOtpCode } from "@/api/service";
-import { isOtpRequired } from "@/api/types";
+import { confirmOtpBind, loginWithToken, verifyOtpCode } from "@/api/service";
+import { isOtpRequired, isOtpSetupRequired, type OtpBindChallenge, type TokenResponse } from "@/api/types";
 import { useAuth } from "@/auth/auth-context";
 import { sha256Hex } from "@/lib/sha256";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { OtpBundleDialog } from "@/components/OtpBundleDialog";
 import { Field } from "@/components/common";
 
 const OTP_PATTERN = /^\d{6}$/;
@@ -24,6 +26,8 @@ export function AdminLoginPage() {
   // 第二步：OTP 验证码（otpTicket 非空时切换到验证码表单）
   const [otpTicket, setOtpTicket] = useState("");
   const [otpCode, setOtpCode] = useState("");
+  // 首次登录：账号未绑定 OTP 时弹出二维码绑定（验证通过即完成登录）
+  const [setupChallenge, setSetupChallenge] = useState<OtpBindChallenge | null>(null);
 
   const handleLogin = async (event: FormEvent) => {
     event.preventDefault();
@@ -32,6 +36,10 @@ export function AdminLoginPage() {
     try {
       const digest = await sha256Hex(password);
       const result = await loginWithToken(username.trim(), digest, "admin");
+      if (isOtpSetupRequired(result)) {
+        setSetupChallenge(result.otp_bind);
+        return;
+      }
       if (isOtpRequired(result)) {
         setOtpTicket(result.otp_ticket);
         setOtpCode("");
@@ -156,6 +164,35 @@ export function AdminLoginPage() {
           </p>
         ) : null}
       </div>
+
+      <OtpBundleDialog
+        bundle={setupChallenge}
+        title="首次登录：绑定动态验证码"
+        onOpenChange={(open) => {
+          if (!open) setSetupChallenge(null);
+        }}
+        onSkip={() => toast.info("已取消绑定，账号在绑定动态验证码前无法登录")}
+        activation={{
+          type: "verify",
+          onVerify: async (code) => {
+            if (!setupChallenge) return false;
+            try {
+              const result = await confirmOtpBind(setupChallenge.ticket, code);
+              if (result.success && result.access_token) {
+                toast.success("动态验证码绑定成功，已登录");
+                finishLogin(result as TokenResponse, username.trim());
+                navigate("/admin");
+                return true;
+              }
+              toast.error(result.message || "验证失败");
+              return false;
+            } catch (error) {
+              toast.error(errorMessage(error, "验证失败"));
+              return false;
+            }
+          },
+        }}
+      />
     </div>
   );
 }
