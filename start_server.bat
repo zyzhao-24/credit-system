@@ -3,6 +3,7 @@ setlocal enabledelayedexpansion
 
 set PID_FILE=server.pid
 set LOG_FILE=server.log
+set SECRET_KEY=1145141919810
 
 echo ========================================
 echo Tuanxiao Credit System - Start Server
@@ -32,33 +33,43 @@ if exist %LOG_FILE% (
     )
 )
 
-REM Check Python
-python --version >nul 2>&1
+REM Check Python (prefer the project virtualenv)
+set PYTHON=python
+if exist .venv\Scripts\python.exe set PYTHON=.venv\Scripts\python.exe
+%PYTHON% --version >nul 2>&1
 if errorlevel 1 (
     echo [ERROR] Python not found
     pause
     exit /b 1
 )
 
-REM Check dependencies
-pip show waitress flask flask-sqlalchemy flask-cors flask-migrate pyjwt cryptography python-dotenv openpyxl >nul 2>&1
+REM Check dependencies with the same interpreter that will run the server
+%PYTHON% -c "import waitress, flask, flask_sqlalchemy, flask_cors, flask_migrate, jwt, cryptography, dotenv, openpyxl" >nul 2>&1
 if errorlevel 1 (
-    echo [INFO] Installing dependencies...
-    pip install -r requirements.txt
+    echo [INFO] Installing dependencies into the project environment...
+    %PYTHON% -m pip install -r requirements.txt
+    if errorlevel 1 (
+        echo [ERROR] Dependency install failed
+        pause
+        exit /b 1
+    )
 )
 
-REM SECRET_KEY is required in production mode
+REM SECRET_KEY is required in production mode (from environment or .env)
 if "%SECRET_KEY%"=="" (
-    echo [WARNING] SECRET_KEY is not set; deploy_server.py will refuse to start.
-    echo           Set it first: set SECRET_KEY=^<random-long-string^>
-    pause
-    exit /b 1
+    findstr /C:"SECRET_KEY=" .env >nul 2>&1
+    if errorlevel 1 (
+        echo [ERROR] SECRET_KEY is not set in the environment or .env
+        echo         Set it first: set SECRET_KEY=^<random-long-string^>
+        pause
+        exit /b 1
+    )
 )
 
 REM Start server (deploy_server.py writes its own PID file)
 echo [INFO] Starting server...
 set BACKGROUND_MODE=1
-start "DeployServer" /B cmd /c "python deploy_server.py >> "%LOG_FILE%" 2>&1"
+start "DeployServer" /B cmd /c "%PYTHON% deploy_server.py >> "%LOG_FILE%" 2>&1"
 
 REM Wait for the server process to write its PID
 set SERVER_PID=

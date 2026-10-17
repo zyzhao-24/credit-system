@@ -21,21 +21,27 @@ if [ -f "$PID_FILE" ]; then
     rm -f "$PID_FILE"
 fi
 
-# Check Python
-if ! command -v python3 &> /dev/null; then
+# Check Python (prefer the project virtualenv)
+PYTHON=python3
+if [ -f ".venv/Scripts/python.exe" ]; then
+    PYTHON=".venv/Scripts/python.exe"
+elif [ -f ".venv/bin/python" ]; then
+    PYTHON=".venv/bin/python"
+fi
+if ! command -v "$PYTHON" &> /dev/null && [ ! -f "$PYTHON" ]; then
     echo "[ERROR] Python3 not found"
     exit 1
 fi
 
-# Check dependencies
-if ! python3 -c "import waitress, flask, flask_sqlalchemy, jwt, cryptography" &> /dev/null; then
-    echo "[INFO] Installing dependencies..."
-    pip3 install -r requirements.txt
+# Check dependencies with the same interpreter that will run the server
+if ! "$PYTHON" -c "import waitress, flask, flask_sqlalchemy, flask_cors, flask_migrate, jwt, cryptography, dotenv, openpyxl" &> /dev/null; then
+    echo "[INFO] Installing dependencies into the project environment..."
+    "$PYTHON" -m pip install -r requirements.txt || { echo "[ERROR] Dependency install failed"; exit 1; }
 fi
 
-# SECRET_KEY is required in production mode
-if [ -z "$SECRET_KEY" ]; then
-    echo "[ERROR] SECRET_KEY is not set; deploy_server.py will refuse to start."
+# SECRET_KEY is required in production mode (from environment or .env)
+if [ -z "$SECRET_KEY" ] && ! grep -q "^SECRET_KEY=" .env 2>/dev/null; then
+    echo "[ERROR] SECRET_KEY is not set in the environment or .env"
     echo "        Set it first: export SECRET_KEY=<random-long-string>"
     exit 1
 fi
@@ -44,7 +50,7 @@ fi
 echo "[INFO] Starting server..."
 export BACKGROUND_MODE=1
 rm -f "$PID_FILE"
-nohup python3 deploy_server.py > $LOG_FILE 2>&1 &
+nohup "$PYTHON" deploy_server.py > $LOG_FILE 2>&1 &
 
 # Wait for the server process to write its PID
 SERVER_PID=""
