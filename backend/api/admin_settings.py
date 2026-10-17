@@ -9,7 +9,7 @@ from backend.auth.decorators import require_admin, require_system_admin
 from backend.extensions import db
 from backend.models import Activity, ActivityAllowedEditor, Admin, Category, Department, EmailConfig, Setting
 from backend.services.emailer import send_test_email
-from backend.utils.crypto import encrypt_secret
+from backend.utils.crypto import decrypt_secret, encrypt_secret
 from backend.utils.passwords import client_password_digest, hash_password_digest
 
 
@@ -108,6 +108,11 @@ def manage_email_config():
         db.session.flush()
 
     if request.method == "GET":
+        # SMTP 密码是 Fernet 可逆加密存储，系统管理员可以查看明文
+        password = decrypt_secret(
+            config.service_email_password_encrypted,
+            current_app.config["SECRET_KEY"],
+        )
         return jsonify(
             {
                 "success": True,
@@ -115,6 +120,7 @@ def manage_email_config():
                     "service_email": config.service_email,
                     "student_email_suffix": config.student_email_suffix,
                     "has_password": bool(config.service_email_password_encrypted),
+                    "service_email_password": password,
                 },
             }
         )

@@ -128,7 +128,6 @@ function StudentsBlock({ canEdit }: { canEdit: boolean }) {
             <TableRow>
               <TableHead>学号</TableHead>
               <TableHead>姓名</TableHead>
-              {canEdit ? <TableHead>密码</TableHead> : null}
               {canEdit ? <TableHead>操作</TableHead> : null}
             </TableRow>
           </TableHeader>
@@ -137,7 +136,6 @@ function StudentsBlock({ canEdit }: { canEdit: boolean }) {
               <TableRow key={student.student_id}>
                 <TableCell>{student.student_id}</TableCell>
                 <TableCell>{student.name}</TableCell>
-                {canEdit ? <TableCell className="text-[#999]">-</TableCell> : null}
                 {canEdit ? (
                   <TableCell>
                     <div className="flex gap-2">
@@ -529,6 +527,7 @@ function EmailConfigBlock() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [suffix, setSuffix] = useState("");
+  const [showSavedPassword, setShowSavedPassword] = useState(false);
   const [testOpen, setTestOpen] = useState(false);
 
   useEffect(() => {
@@ -562,6 +561,11 @@ function EmailConfigBlock() {
       });
       if (result.success) {
         toast.success("邮箱配置保存成功");
+        if (password) {
+          setConfig((prev) =>
+            prev ? { ...prev, has_password: true, service_email_password: password } : prev,
+          );
+        }
         setPassword("");
       } else {
         toast.error(result.message || "保存失败");
@@ -570,6 +574,8 @@ function EmailConfigBlock() {
       toast.error(errorMessage(error, "保存失败"));
     }
   };
+
+  const savedPassword = config?.service_email_password ?? "";
 
   return (
     <section>
@@ -583,13 +589,32 @@ function EmailConfigBlock() {
             placeholder="用于发送密码重置邮件"
           />
         </Field>
+        {config?.has_password ? (
+          <Field label="当前已保存的密码/授权码">
+            <div className="flex gap-2">
+              <Input
+                type={showSavedPassword ? "text" : "password"}
+                value={savedPassword}
+                readOnly
+                className="flex-1 bg-[#f5f5f5]"
+              />
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setShowSavedPassword((v) => !v)}
+              >
+                {showSavedPassword ? "隐藏" : "显示"}
+              </Button>
+            </div>
+          </Field>
+        ) : null}
         <Field label="服务邮箱密码/授权码">
           <Input
             type="password"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
             placeholder={
-              config?.has_password ? "已保存密码（输入新值以更改，留空保持不变）" : "邮箱密码或SMTP授权码"
+              config?.has_password ? "输入新值以更改，留空保持不变" : "邮箱密码或SMTP授权码"
             }
           />
         </Field>
