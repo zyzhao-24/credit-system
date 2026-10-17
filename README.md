@@ -11,7 +11,7 @@ pip install -r requirements.txt
 # 2. 配置环境变量
 cp .env.example .env   # 编辑 SECRET_KEY（生产必须）
 
-# 3. 初始化管理员（确保内置 system 账号存在，初始密码：sysadmin）
+# 3. 初始化管理员（确保内置 system 账号存在；首次创建时随机生成密码并打印一次）
 python init_admin.py
 
 # 3b. 首次部署必须设置 system 的密码与 OTP（登录强制两步验证）
@@ -62,9 +62,11 @@ cd frontend && npm run dev
   自动绑定并发送二维码；忘记密码会同时重置密码与 OTP。
 - **管理员**：无邮箱，创建账号时接口一次性返回二维码与 Base32 密钥（仅本次可见）；
   系统管理员可在后台“重置 OTP”普通管理员的绑定。
-- **system 账号**：内置固定存在，接口禁止创建/删除/修改；其密码与 OTP 只能通过
-  服务器本地命令维护（`manage.py reset-system-password` / `reset-system-otp`），
-  任意账号也可用 `manage.py set-otp <student|admin> <账号>` 离线重新绑定（不发邮件）。
+- **system 账号**：内置固定存在且是唯一的系统管理员，接口禁止创建/删除/修改它，
+  也不允许再创建或提升其他 `system_admin`；首次启动建号时随机生成密码并打印一次，
+  之后密码与 OTP 只能通过服务器本地命令维护（`manage.py reset-system-password` /
+  `reset-system-otp`），任意账号也可用 `manage.py set-otp <student|admin> <账号>`
+  离线重新绑定（不发邮件）。
 
 ## 核心功能
 

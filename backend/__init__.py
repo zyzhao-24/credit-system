@@ -70,23 +70,36 @@ def _ensure_schema(app: Flask) -> None:
 
 
 def _ensure_system_admin(app: Flask) -> None:
-    """The built-in system admin account always exists (fixed id 'system')."""
+    """The built-in system admin account always exists (fixed id 'system').
+
+    On first startup the account is created with a randomly generated
+    password that is printed once; afterwards the password is never touched
+    here (use manage.py reset-system-password / reset-system-otp).
+    """
+    import secrets
+
     from backend.models.core import Admin
     from backend.utils.passwords import client_password_digest, hash_password_digest
 
     with app.app_context():
         admin = db.session.get(Admin, "system")
         if admin is None:
+            password = secrets.token_urlsafe(12)
             db.session.add(
                 Admin(
                     admin_id="system",
-                    password_hash=hash_password_digest(client_password_digest("sysadmin")),
+                    password_hash=hash_password_digest(client_password_digest(password)),
                     role="system_admin",
                     department="",
                 )
             )
             db.session.commit()
-            app.logger.warning("已创建内置 system 管理员（初始密码 sysadmin，请用 manage.py 修改）")
+            message = (
+                "已创建内置 system 管理员，初始密码（仅显示这一次，"
+                "也可用 manage.py reset-system-password 重置）: " + password
+            )
+            print(message, flush=True)
+            app.logger.warning(message)
         elif admin.role != "system_admin":
             admin.role = "system_admin"
             db.session.commit()

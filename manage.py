@@ -55,15 +55,18 @@ def cmd_ensure_system() -> int:
             db.session.commit()
             print("[OK] 已修正 system 的角色为 system_admin")
         return 0
+    password = secrets.token_urlsafe(12)
     admin = Admin(
         admin_id=SYSTEM_ADMIN_ID,
-        password_hash=hash_password_digest(client_password_digest("sysadmin")),
+        password_hash=hash_password_digest(client_password_digest(password)),
         role="system_admin",
         department="",
     )
     db.session.add(admin)
     db.session.commit()
-    print("[OK] 已创建 system 管理员（初始密码: sysadmin，请尽快用 reset-system-password 修改）")
+    print("[OK] 已创建 system 管理员，初始密码（仅显示这一次）:")
+    print(f"    {password}")
+    print("    如需更换: python manage.py reset-system-password")
     return 0
 
 

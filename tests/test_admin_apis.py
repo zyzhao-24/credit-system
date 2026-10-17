@@ -3,6 +3,29 @@
 from backend.utils.passwords import client_password_digest
 
 
+def test_system_admin_role_is_reserved_for_builtin_account(
+    app, database, seed_legacy_payload, minimal_payload, login
+):
+    """系统管理员固定为内置 system 账号：接口不能创建或提升 system_admin。"""
+    seed_legacy_payload(minimal_payload)
+    client = app.test_client()
+    token = login("system", "adminpass", "admin")
+
+    created = client.post(
+        "/api/admin/admins",
+        json={"admin_id": "boss", "password": "x123456", "role": "system_admin"},
+        headers={"Authorization": token},
+    )
+    assert created.get_json()["success"] is False
+
+    promoted = client.put(
+        "/api/admin/admins",
+        json={"admin_id": "admin", "role": "system_admin"},
+        headers={"Authorization": token},
+    )
+    assert promoted.get_json()["success"] is False
+
+
 def test_batch_import_does_not_reset_existing_password(app, database, seed_legacy_payload, minimal_payload, login):
     seed_legacy_payload(minimal_payload)
     client = app.test_client()

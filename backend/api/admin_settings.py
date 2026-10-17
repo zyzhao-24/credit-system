@@ -215,8 +215,9 @@ def manage_admins():
             return _error("账号不能为空")
         if admin_id == SYSTEM_ADMIN_ID:
             return _error("system 为内置系统管理员账号，不能通过接口创建")
-        if role not in {"admin", "system_admin"}:
-            return _error("角色不正确")
+        # 系统管理员固定只有内置 system 账号，接口只能创建普通管理员
+        if role != "admin":
+            return _error("只能通过接口创建普通管理员（系统管理员为内置 system 账号）")
         if db.session.get(Admin, admin_id):
             return _error("账号已存在")
         admin = Admin(
@@ -250,8 +251,9 @@ def manage_admins():
         if "password" in data:
             admin.password_hash = hash_password_digest(client_password_digest(data["password"]))
         if "role" in data:
-            if data["role"] not in {"admin", "system_admin"}:
-                return _error("角色不正确")
+            # 不允许通过接口提升为系统管理员（固定只有内置 system）
+            if data["role"] != "admin":
+                return _error("不能将账号设为系统管理员（系统管理员为内置 system 账号）")
             admin.role = data["role"]
         if "department" in data:
             admin.department = data["department"]
