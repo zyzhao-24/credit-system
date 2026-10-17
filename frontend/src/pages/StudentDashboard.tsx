@@ -329,7 +329,6 @@ function ChangePasswordCard({ onChanged }: { onChanged: () => Promise<void> }) {
 /** 学生主动重置 OTP：弹出新二维码，输入验证码确认后才生效，放弃则原 OTP 不变。 */
 function ChangeOtpCard() {
   const [challenge, setChallenge] = useState<OtpBindChallenge | null>(null);
-  const [done, setDone] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const begin = async () => {
@@ -337,7 +336,6 @@ function ChangeOtpCard() {
     try {
       const result = await beginStudentOtpReset();
       if (result.success && result.otp_bind) {
-        setDone(false);
         setChallenge(result.otp_bind);
       } else {
         toast.error(result.message || "生成二维码失败");
@@ -363,11 +361,9 @@ function ChangeOtpCard() {
         bundle={challenge}
         title="重新绑定动态验证码"
         onOpenChange={(open) => {
-          if (open) return;
-          if (!done) toast.info("已取消，原有动态验证码保持不变");
-          setChallenge(null);
-          setDone(false);
+          if (!open) setChallenge(null);
         }}
+        onSkip={() => toast.info("已取消，原有动态验证码保持不变")}
         activation={{
           type: "verify",
           onVerify: async (code) => {
@@ -376,7 +372,6 @@ function ChangeOtpCard() {
               const result = await confirmOtpBind(challenge.ticket, code);
               if (result.success) {
                 toast.success("动态验证码已更新，下次登录请使用新验证码");
-                setDone(true);
                 return true;
               }
               toast.error(result.message || "验证失败");

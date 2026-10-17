@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { Download, Copy } from "lucide-react";
 import type { AdminOtpBundle } from "@/api/types";
@@ -17,23 +17,43 @@ type Activation =
  *  - 默认仅展示（创建管理员后转交二维码）；
  *  - activation=verify：扫码后输入验证码，验证通过才生效（注册/学生自助重置）；
  *  - activation=confirm：系统管理员二次确认后才生效（重置管理员 OTP）。
- *  关闭弹窗即放弃，候选密钥不会生效。 */
+ *  关闭弹窗即放弃，候选密钥不会生效；未完成激活而关闭时触发 onSkip。 */
 export function OtpBundleDialog({
   bundle,
   onOpenChange,
+  onSkip,
   activation,
   title = "绑定动态验证码（OTP）",
 }: {
   bundle: AdminOtpBundle | null;
   onOpenChange: (open: boolean) => void;
+  /** 未验证/确认就关闭时回调（成功后正常关闭不会触发） */
+  onSkip?: () => void;
   activation?: Activation;
   title?: string;
 }) {
+  // 用 ref 而非 state 记录完成状态：submit 闭包持有的是旧渲染的回调，
+  // state 在 onVerify 内的更新不会反映到本次关闭判断中
+  const completedRef = useRef(false);
+
+  const handleOpenChange = (open: boolean) => {
+    if (!open) {
+      if (!completedRef.current) onSkip?.();
+      completedRef.current = false;
+    }
+    onOpenChange(open);
+  };
+
   return (
-    <Dialog open={bundle !== null} onOpenChange={onOpenChange}>
+    <Dialog open={bundle !== null} onOpenChange={handleOpenChange}>
       <DialogContent title={title} className="max-w-[420px]">
         {bundle ? (
-          <OtpBundleBody bundle={bundle} activation={activation} onOpenChange={onOpenChange} />
+          <OtpBundleBody
+            bundle={bundle}
+            activation={activation}
+            onOpenChange={handleOpenChange}
+            completedRef={completedRef}
+          />
         ) : null}
       </DialogContent>
     </Dialog>
@@ -44,10 +64,12 @@ function OtpBundleBody({
   bundle,
   activation,
   onOpenChange,
+  completedRef,
 }: {
   bundle: AdminOtpBundle;
   activation?: Activation;
   onOpenChange: (open: boolean) => void;
+  completedRef: { current: boolean };
 }) {
   const [code, setCode] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -65,14 +87,19 @@ function OtpBundleBody({
     if (!activation) return;
     setSubmitting(true);
     try {
+      let succeeded = false;
       if (activation.type === "verify") {
         if (!OTP_PATTERN.test(code.trim())) {
           toast.error("请输入6位数字验证码");
           return;
         }
-        if (await activation.onVerify(code.trim())) onOpenChange(false);
+        succeeded = await activation.onVerify(code.trim());
       } else {
-        if (await activation.onConfirm()) onOpenChange(false);
+        succeeded = await activation.onConfirm();
+      }
+      if (succeeded) {
+        completedRef.current = true;
+        onOpenChange(false);
       }
     } finally {
       setSubmitting(false);

@@ -220,7 +220,6 @@ function RegisterDialog({
   const [sendingCode, setSendingCode] = useState(false);
   const [countdown, setCountdown] = useState(0);
   const [bindChallenge, setBindChallenge] = useState<OtpBindChallenge | null>(null);
-  const [bindDone, setBindDone] = useState(false);
 
   // 发送验证码后的倒计时，期间禁止重复发送
   useEffect(() => {
@@ -398,11 +397,9 @@ function RegisterDialog({
         bundle={bindChallenge}
         title="注册成功：绑定动态验证码"
         onOpenChange={(isOpen) => {
-          if (isOpen) return;
-          if (!bindDone) toast.info("已跳过 OTP 绑定，首次登录时将自动发送到您的学号邮箱");
-          setBindChallenge(null);
-          setBindDone(false);
+          if (!isOpen) setBindChallenge(null);
         }}
+        onSkip={() => toast.info("已跳过 OTP 绑定，首次登录时将自动发送到您的学号邮箱")}
         activation={{
           type: "verify",
           onVerify: async (code) => {
@@ -411,7 +408,6 @@ function RegisterDialog({
               const result = await confirmOtpBind(bindChallenge.ticket, code);
               if (result.success) {
                 toast.success("动态验证码绑定成功，请使用密码 + 验证码登录");
-                setBindDone(true);
                 return true;
               }
               toast.error(result.message || "验证失败");
@@ -442,7 +438,6 @@ function ForgotPasswordDialog({
   const [sendingCode, setSendingCode] = useState(false);
   const [countdown, setCountdown] = useState(0);
   const [bindChallenge, setBindChallenge] = useState<OtpBindChallenge | null>(null);
-  const [bindDone, setBindDone] = useState(false);
 
   useEffect(() => {
     if (countdown <= 0) return;
@@ -575,11 +570,9 @@ function ForgotPasswordDialog({
         bundle={bindChallenge}
         title="密码已重置：重新绑定动态验证码"
         onOpenChange={(isOpen) => {
-          if (isOpen) return;
-          if (!bindDone) toast.info("已跳过 OTP 重绑，原有动态验证码保持不变");
-          setBindChallenge(null);
-          setBindDone(false);
+          if (!isOpen) setBindChallenge(null);
         }}
+        onSkip={() => toast.info("已跳过 OTP 重绑，原有动态验证码保持不变")}
         activation={{
           type: "verify",
           onVerify: async (code) => {
@@ -588,7 +581,6 @@ function ForgotPasswordDialog({
               const result = await confirmOtpBind(bindChallenge.ticket, code);
               if (result.success) {
                 toast.success("动态验证码已重新绑定");
-                setBindDone(true);
                 return true;
               }
               toast.error(result.message || "验证失败");
