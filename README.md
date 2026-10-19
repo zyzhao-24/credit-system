@@ -17,8 +17,8 @@ cp .env.example .env   # 编辑 SECRET_KEY（生产必须）
 #    （密码不落盘、不打印），启动服务后在服务器本机用浏览器访问
 #    http://localhost:5002/local/system 设置 system 密码并绑定 OTP（登录强制两步验证）
 
-# 4. 构建前端
-cd frontend && npm install && npm run build && cd ..
+# 4. 构建前端（用 uv 环境自带的 Node 24，无需系统安装 Node/npm）
+uv run python build_frontend.py
 
 # 5. 启动系统
 uv run python run.py             # 开发环境（Flask dev server，端口 5000）

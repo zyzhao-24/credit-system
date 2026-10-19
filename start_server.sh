@@ -45,6 +45,12 @@ if ! "$PYTHON" -c "import waitress, flask, flask_sqlalchemy, flask_cors, flask_m
     fi
 fi
 
+# Build frontend if missing (uses uv-managed Node.js, no system Node needed)
+if [ ! -f frontend/dist/index.html ]; then
+    echo "[INFO] Building frontend with bundled Node.js..."
+    "$PYTHON" build_frontend.py || { echo "[ERROR] Frontend build failed"; exit 1; }
+fi
+
 # Load configuration from .env into environment variables
 if [ ! -f .env ]; then
     echo "[ERROR] .env not found - copy .env.example to .env and fill it in"

@@ -58,6 +58,17 @@ if errorlevel 1 (
     if exist .venv\Scripts\python.exe set PYTHON=.venv\Scripts\python.exe
 )
 
+REM Build frontend if missing (uses uv-managed Node.js, no system Node needed)
+if not exist frontend\dist\index.html (
+    echo [INFO] Building frontend with bundled Node.js...
+    %PYTHON% build_frontend.py
+    if errorlevel 1 (
+        echo [ERROR] Frontend build failed
+        pause
+        exit /b 1
+    )
+)
+
 REM Load configuration from .env into environment variables
 if not exist .env (
     echo [ERROR] .env not found - copy .env.example to .env and fill it in
