@@ -94,7 +94,12 @@ if __name__ == '__main__':
             from cheroot.wsgi import Server
             from cheroot.ssl.builtin import BuiltinSSLAdapter
 
-            server = Server((host, port), app, numthreads=32, timeout=60)
+            server = Server(
+                (host, port), app,
+                numthreads=256,        # 目标：至少抗 200 并发连接
+                request_queue_size=256,  # 默认 backlog 只有 5，突发连接会被 TCP 层拒掉
+                timeout=60,
+            )
             # numthreads 不能太小：校园网客户端经常在 TLS 握手中途断开，
             # 每个卡住的握手在 timeout 秒内占用一个线程，4 线程会被瞬间耗尽
             server.max_request_body_size = 10 * 1024 * 1024
@@ -106,7 +111,7 @@ if __name__ == '__main__':
         else:
             from waitress import serve
 
-            serve(app, host=host, port=port, threads=16, channel_timeout=300, url_scheme='http')
+            serve(app, host=host, port=port, threads=64, channel_timeout=300, url_scheme='http')
     finally:
         try:
             os.remove('server.pid')
