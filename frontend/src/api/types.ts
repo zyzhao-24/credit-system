@@ -223,7 +223,7 @@ export interface AdminAccount {
   admin_id: string;
   role: string;
   department: string;
-  /** 是否已绑定 OTP（system 账号的 OTP 只能通过 manage.py 维护） */
+  /** 是否已绑定 OTP（system 账号的 OTP 只能通过本机维护台 :5002 维护） */
   has_otp: boolean;
 }
 

@@ -438,8 +438,9 @@ function AdminsBlock({ currentAdminId }: { currentAdminId: string }) {
                       <Button
                         size="sm"
                         variant="secondary"
+                        title="维护台在独立端口 5002（仅回环）。在服务器本机点击即可；远程服务器需先建立隧道：ssh -L 5002:127.0.0.1:5002 <服务器>"
                         onClick={() => {
-                          window.location.href = "/local/system";
+                          window.location.href = "http://localhost:5002/local/system";
                         }}
                       >
                         前往本机维护页
