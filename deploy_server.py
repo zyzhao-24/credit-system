@@ -57,13 +57,21 @@ def get_local_ip():
 if __name__ == '__main__':
     app = create_app()
 
-    host = '0.0.0.0'
+    behind_proxy = os.environ.get('BEHIND_PROXY') == '1'
     port = int(os.environ.get('PORT', '5000'))
     local_ip = get_local_ip()
-    # 证书不存在时自动生成自签名证书；生成失败才回退明文 HTTP
-    import gen_cert
+    if behind_proxy:
+        # 反代模式：nginx 终结 TLS，本进程只听回环说纯 HTTP——
+        # cheroot 在单一连接管理线程里做 TLS 握手，任何卡死的握手都会
+        # 堵死全站 accept（实测校园网环境下随机卡死几十秒）
+        host = '127.0.0.1'
+        tls_available = False
+    else:
+        host = '0.0.0.0'
+        # 证书不存在时自动生成自签名证书；生成失败才回退明文 HTTP
+        import gen_cert
 
-    tls_available = gen_cert.ensure_cert()
+        tls_available = gen_cert.ensure_cert()
     scheme = 'https' if tls_available else 'http'
 
     # 由服务进程自己写入 PID，避免启动脚本误抓其它 python.exe
@@ -73,13 +81,19 @@ if __name__ == '__main__':
     print("\n" + "=" * 60)
     print("Credit System Server Started")
     print("=" * 60)
-    print(f"\n[Localhost]")
-    print(f"   学生登录:   {scheme}://localhost:{port}/login")
-    print(f"   管理员登录: {scheme}://localhost:{port}/admin/login")
-    print(f"   维护台:     {scheme}://localhost:{port}/local/system (仅本机可访问)")
-    print(f"\n[LAN]")
-    print(f"   Student: {scheme}://{local_ip}:{port}/login")
-    print(f"   Admin:   {scheme}://{local_ip}:{port}/admin/login")
+    if behind_proxy:
+        print(f"\n[Proxy Mode] 本进程仅监听 http://127.0.0.1:{port}（nginx 对外提供 HTTPS）")
+        print(f"   学生登录:   https://{local_ip}/login  （旧地址 :{port} 同样可用）")
+        print(f"   管理员登录: https://{local_ip}/admin/login")
+        print(f"   维护台:     ssh -L 5443:127.0.0.1:{port} <本机> 后访问 http://localhost:5443/local/system")
+    else:
+        print(f"\n[Localhost]")
+        print(f"   学生登录:   {scheme}://localhost:{port}/login")
+        print(f"   管理员登录: {scheme}://localhost:{port}/admin/login")
+        print(f"   维护台:     {scheme}://localhost:{port}/local/system (仅本机可访问)")
+        print(f"\n[LAN]")
+        print(f"   Student: {scheme}://{local_ip}:{port}/login")
+        print(f"   Admin:   {scheme}://{local_ip}:{port}/admin/login")
     print(f"\n[Tips]")
     print(f"   - Admin login is now at the fixed path /admin/login")
     if tls_available:

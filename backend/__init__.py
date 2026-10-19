@@ -179,6 +179,14 @@ def create_app(config_object: type[Config] | None = None, **overrides) -> Flask:
     app.config.update(overrides)
     app.json.ensure_ascii = False
 
+    if os.getenv("BEHIND_PROXY") == "1":
+        # nginx 终结 TLS 并转发真实客户端 IP；只信任紧邻的一层代理，
+        # 直连回环的 SSH 隧道流量没有 XFF 头，remote_addr 保持 127.0.0.1，
+        # 因此 /local/system 的本机校验在两种入口下都成立
+        from werkzeug.middleware.proxy_fix import ProxyFix
+
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
+
     Path(app.instance_path).mkdir(parents=True, exist_ok=True)
 
     db.init_app(app)
