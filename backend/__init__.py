@@ -6,7 +6,7 @@ import os
 import sqlite3
 from pathlib import Path
 
-from flask import Flask, jsonify, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
@@ -246,5 +246,12 @@ def create_app(config_object: type[Config] | None = None, **overrides) -> Flask:
             if candidate.is_file() and FRONTEND_DIST in candidate.resolve().parents:
                 return send_from_directory(FRONTEND_DIST, path)
         return send_from_directory(FRONTEND_DIST, "index.html")
+
+    @app.after_request
+    def cache_hashed_assets(response):
+        """Vite 产物文件名带内容哈希，/assets/ 下的文件可以安全长缓存。"""
+        if request.path.startswith("/assets/") and response.status_code == 200:
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
 
     return app
