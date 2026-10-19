@@ -169,7 +169,19 @@ def _ensure_system_admin(app: Flask) -> None:
             db.session.commit()
 
 
-def create_app(config_object: type[Config] | None = None, **overrides) -> Flask:
+def create_app(
+    config_object: type[Config] | None = None,
+    maintenance_only: bool = False,
+    include_maintenance: bool = True,
+    **overrides,
+) -> Flask:
+    """应用工厂。
+
+    maintenance_only=True：只挂载本机维护台蓝图（deploy_server 用它跑在
+    独立的回环端口上）；include_maintenance=False：面向 LAN 的主应用不
+    挂载维护台——维护台由此与对外服务在端口级隔离，绝不对外暴露。
+    开发（run.py）与测试使用默认参数，单进程包含全部路由。
+    """
     env_name = os.getenv("FLASK_ENV", "development")
     if config_object is None:
         config_object = ProductionConfig if env_name == "production" else Config
@@ -179,14 +191,6 @@ def create_app(config_object: type[Config] | None = None, **overrides) -> Flask:
     app.config.update(overrides)
     app.json.ensure_ascii = False
 
-    if os.getenv("BEHIND_PROXY") == "1":
-        # nginx 终结 TLS 并转发真实客户端 IP；只信任紧邻的一层代理，
-        # 直连回环的 SSH 隧道流量没有 XFF 头，remote_addr 保持 127.0.0.1，
-        # 因此 /local/system 的本机校验在两种入口下都成立
-        from werkzeug.middleware.proxy_fix import ProxyFix
-
-        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
-
     Path(app.instance_path).mkdir(parents=True, exist_ok=True)
 
     db.init_app(app)
@@ -194,6 +198,19 @@ def create_app(config_object: type[Config] | None = None, **overrides) -> Flask:
 
     # Import models before migrations or create_all.
     from backend import models  # noqa: F401
+    from backend.api.local_admin import local_admin_bp
+
+    if maintenance_only:
+        app.register_blueprint(local_admin_bp)
+        _ensure_schema(app)
+        _ensure_system_admin(app)
+
+        @app.get("/api/health")
+        def health():
+            return jsonify({"success": True, "status": "ok"})
+
+        return app
+
     from backend.api.auth import auth_bp
     from backend.api.admin_activities import admin_activities_bp
     from backend.api.admin_settings import admin_settings_bp
@@ -201,7 +218,6 @@ def create_app(config_object: type[Config] | None = None, **overrides) -> Flask:
     from backend.api.admin_questionnaires import admin_questionnaires_bp
     from backend.api.admin_reports import admin_reports_bp
     from backend.api.feedback import feedback_bp
-    from backend.api.local_admin import local_admin_bp
     from backend.api.questionnaires import questionnaires_bp
     from backend.api.student import student_bp
 
@@ -212,7 +228,8 @@ def create_app(config_object: type[Config] | None = None, **overrides) -> Flask:
     app.register_blueprint(admin_questionnaires_bp)
     app.register_blueprint(admin_reports_bp)
     app.register_blueprint(feedback_bp)
-    app.register_blueprint(local_admin_bp)
+    if include_maintenance:
+        app.register_blueprint(local_admin_bp)
     app.register_blueprint(questionnaires_bp)
     app.register_blueprint(student_bp)
 

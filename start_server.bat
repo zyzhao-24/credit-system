@@ -112,11 +112,7 @@ echo   status.bat  - Check status
 echo   logs.bat    - View logs
 echo   stop_server.bat - Stop server
 echo.
-if exist instance\tls.crt (
-    echo Student: https://localhost:5000/login
-    echo Admin:   https://localhost:5000/admin/login
-) else (
-    echo Student: http://localhost:5000/login
-    echo Admin:   http://localhost:5000/admin/login
-)
+echo Localhost: http://localhost:5000/login  and  http://localhost:5000/admin/login
+echo LAN:       https://SERVER_IP:5000/login  (HTTPS required)
+echo Console:   http://localhost:5002/local/system
 echo.

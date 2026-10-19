@@ -96,11 +96,7 @@ echo "  ./status.sh - Check status"
 echo "  ./logs.sh   - View logs"
 echo "  ./stop_server.sh - Stop server"
 echo ""
-if [ -f instance/tls.crt ]; then
-    echo "Student: https://localhost:5000/login"
-    echo "Admin:   https://localhost:5000/admin/login"
-else
-    echo "Student: http://localhost:5000/login"
-    echo "Admin:   http://localhost:5000/admin/login"
-fi
+echo "Localhost: http://localhost:5000/login  and  http://localhost:5000/admin/login"
+echo "LAN:       https://SERVER_IP:5000/login  (HTTPS required)"
+echo "Console:   http://localhost:5002/local/system"
 echo ""

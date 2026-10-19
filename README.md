@@ -15,7 +15,7 @@ cp .env.example .env   # 编辑 SECRET_KEY（生产必须）
 
 # 3. 初始化管理员：无需脚本。首次启动时自动创建内置 system 账号
 #    （密码不落盘、不打印），启动服务后在服务器本机用浏览器访问
-#    http://localhost:5000/local/system 设置 system 密码并绑定 OTP（登录强制两步验证）
+#    http://localhost:5002/local/system 设置 system 密码并绑定 OTP（登录强制两步验证）
 
 # 4. 构建前端
 cd frontend && npm install && npm run build && cd ..
@@ -34,11 +34,22 @@ cd frontend && npm run dev
 - 学生登录：http://localhost:5000/login
 - 管理员登录：http://localhost:5000/admin/login（固定路径）
 
-## HTTPS（自签名证书）
+## 服务架构与 HTTPS（自签名证书）
 
-`deploy_server.py` 启动前会自动生成自签名证书（`instance/tls.crt` / `tls.key`，
-SAN 含 localhost 与本机内网 IP），并以 cheroot 提供 HTTPS（端口不变）；
-仅当生成失败时才回退明文 HTTP。手动管理：
+生产形态（`deploy_server.py`）由三个纯 Python 组件组成，全部依赖由 uv 安装：
+
+- **tls_proxy**（`tls_proxy.py`，纯标准库）：监听 `0.0.0.0:5000`，做首字节
+  协议嗅探的双协议入口——**localhost 一律 HTTP，LAN 一律 HTTPS**（LAN 说
+  HTTP 会被拒绝）。TLS 握手在每个连接的独立线程中完成，卡死的握手不会
+  堵死全站 accept（cheroot 单线程握手曾导致校园网环境下随机全站卡死）。
+- **主应用 waitress**：只监听 `127.0.0.1:5001`，外部无法直连。
+- **本机维护台**：独立 app 监听 `127.0.0.1:5002`，与主应用端口级隔离，
+  绝不对外暴露；仅本机（或 SSH 隧道）可访问。
+
+证书仍由 `gen_cert.py` 在启动时自动生成（`instance/tls.crt` / `tls.key`，
+SAN 含 localhost 与本机内网 IP）；证书不可用时 LAN 入口拒绝启动
+（fail-closed，安全底线是 LAN 必须 HTTPS），localhost HTTP 不受影响。
+手动管理：
 
 ```bash
 uv run python gen_cert.py --force  # 重签（内网 IP 变化或证书到期时）
@@ -82,7 +93,7 @@ OTP 绑定/重置统一遵循“验证才生效”原则：凡需要人手持新
 - **system 账号**：内置固定存在且是唯一的系统管理员，接口禁止创建/删除/修改它，
   也不允许再创建或提升其他 `system_admin`；首次启动建号时使用不落盘、不打印的
   随机密码（无人知晓），初始配置通过**本机专用维护页**完成：在服务器本机访问
-  `http://localhost:5000/local/system`（非本机访问返回 404，表单带签名令牌防跨站提交；
+  `http://localhost:5002/local/system`（独立端口、仅绑定回环地址，表单带签名令牌防跨站提交；
   密码可自定义、至少 8 位，留空则随机生成，均仅显示一次；OTP 与学生主动重置一致，
   扫码后输入验证码确认才生效）。
 
@@ -114,7 +125,7 @@ OTP 绑定/重置统一遵循“验证才生效”原则：凡需要人手持新
 
 ### 本机维护页（仅服务器 localhost 可访问）
 
-`/local/system`：system 密码重置、system OTP 重置、邮件服务配置
+`http://localhost:5002/local/system`：system 密码重置、system OTP 重置、邮件服务配置
 （SMTP 账号/明文密码/学生邮箱后缀）与测试发送。**这三类信息只出现在此页面**，
 Web 管理后台不提供邮箱配置入口。
 
@@ -147,13 +158,13 @@ Web 管理后台不提供邮箱配置入口。
 ## 生产部署注意
 
 - 必须设置强随机 `SECRET_KEY`（生产缺省时拒绝启动）。
-- **务必通过反向代理启用 HTTPS/TLS**：浏览器发送的是密码的 SHA-256 摘要而非原密码，
-  明文 HTTP 下摘要和 JWT 都可能被嗅探重放。
+- **LAN 一律 HTTPS**：tls_proxy 会拒绝外部地址的明文 HTTP（返回 403）；
+  浏览器发送的是密码的 SHA-256 摘要而非原密码，叠加 TLS 后摘要与 JWT 均不可被嗅探。
 - SMTP 密码使用由 `SECRET_KEY` 派生的 Fernet 密钥加密存储；更换 `SECRET_KEY`
   会使已保存的 SMTP 密码无法解密，需要重新录入。
-- 邮件服务配置与 system 密码/OTP 只出现在本机维护页 `/local/system`；
-  若部署到同机反向代理之后，务必在代理层拦截该路径（否则所有请求的
-  `remote_addr` 都是回环地址，本机限制会失效）。
+- 邮件服务配置与 system 密码/OTP 只出现在本机维护台（`127.0.0.1:5002` 独立端口）；
+  远程服务器上通过 SSH 隧道访问：`ssh -L 5002:127.0.0.1:5002 <服务器>`，
+  然后浏览器打开 `http://localhost:5002/local/system`。
 
 ## 文档
 
