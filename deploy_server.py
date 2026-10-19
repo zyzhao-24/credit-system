@@ -1,8 +1,12 @@
 """
 团校积分系统 - 服务器部署版本
 
-使用 Waitress WSGI 服务器托管重构后的后端（backend.create_app），
+使用 WSGI 服务器托管重构后的后端（backend.create_app），
 同时服务 /api 接口与 frontend/dist 下的 React 构建产物。
+
+TLS：启动前自动检查 instance/tls.crt 与 tls.key，不存在则自动生成自签名证书
+（gen_cert.ensure_cert），随后使用 cheroot 提供 HTTPS（浏览器警告属预期）；
+仅当生成失败时回退到 Waitress 的明文 HTTP。
 
 运行方式：
     set FLASK_ENV=production
@@ -28,11 +32,14 @@ if os.environ.get('BACKGROUND_MODE') == '1':
         except Exception:
             pass
 
-# 生产部署默认使用生产配置（要求 SECRET_KEY）
-os.environ.setdefault('FLASK_ENV', 'production')
+# 本脚本即生产入口：强制生产配置（要求 SECRET_KEY），
+# 即使 .env / 环境变量里写着 FLASK_ENV=development 也不降级
+os.environ['FLASK_ENV'] = 'production'
 
-from waitress import serve
 from backend import create_app
+
+TLS_CERT = os.path.join('instance', 'tls.crt')
+TLS_KEY = os.path.join('instance', 'tls.key')
 
 
 def get_local_ip():
@@ -53,6 +60,11 @@ if __name__ == '__main__':
     host = '0.0.0.0'
     port = int(os.environ.get('PORT', '5000'))
     local_ip = get_local_ip()
+    # 证书不存在时自动生成自签名证书；生成失败才回退明文 HTTP
+    import gen_cert
+
+    tls_available = gen_cert.ensure_cert()
+    scheme = 'https' if tls_available else 'http'
 
     # 由服务进程自己写入 PID，避免启动脚本误抓其它 python.exe
     with open('server.pid', 'w', encoding='utf-8') as pid_file:
@@ -62,20 +74,38 @@ if __name__ == '__main__':
     print("Credit System Server Started")
     print("=" * 60)
     print(f"\n[Student Login]")
-    print(f"   Local: http://localhost:{port}/login")
-    print(f"   LAN:   http://{local_ip}:{port}/login")
+    print(f"   Local: {scheme}://localhost:{port}/login")
+    print(f"   LAN:   {scheme}://{local_ip}:{port}/login")
     print(f"\n[Admin Login]")
-    print(f"   Local: http://localhost:{port}/admin/login")
-    print(f"   LAN:   http://{local_ip}:{port}/admin/login")
+    print(f"   Local: {scheme}://localhost:{port}/admin/login")
+    print(f"   LAN:   {scheme}://{local_ip}:{port}/admin/login")
     print(f"\n[Tips]")
     print(f"   - Admin login is now at the fixed path /admin/login")
+    if tls_available:
+        print(f"   - HTTPS 使用自签名证书，浏览器提示“不安全”属预期（高级 → 继续前往）")
+    else:
+        print(f"   - 当前为明文 HTTP；uv run python gen_cert.py 生成证书后重启即启用 HTTPS")
     print(f"   - Press Ctrl+C to stop the server")
     print("=" * 60 + "\n", flush=True)
 
     try:
-        serve(app, host=host, port=port, threads=4, channel_timeout=300, url_scheme='http')
+        if tls_available:
+            from cheroot.wsgi import Server
+            from cheroot.ssl.builtin import BuiltinSSLAdapter
+
+            server = Server((host, port), app, numthreads=4, timeout=300)
+            server.ssl_adapter = BuiltinSSLAdapter(TLS_CERT, TLS_KEY)
+            try:
+                server.start()
+            finally:
+                server.stop()
+        else:
+            from waitress import serve
+
+            serve(app, host=host, port=port, threads=4, channel_timeout=300, url_scheme='http')
     finally:
         try:
             os.remove('server.pid')
         except OSError:
             pass
+

@@ -4,6 +4,7 @@ import { useAuth } from "@/auth/auth-context";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageHeader } from "@/components/PageHeader";
 import { ActivitiesSection } from "./admin/ActivitiesSection";
+import { FeedbackSection } from "./admin/FeedbackSection";
 import { QualificationSection } from "./admin/QualificationSection";
 import { ReportSection } from "./admin/ReportSection";
 import { SettingsSection } from "./admin/SettingsSection";
@@ -11,7 +12,8 @@ import { StudentsSection } from "./admin/StudentsSection";
 
 /**
  * 管理员控制台。系统管理员显示全部标签；普通管理员显示
- * 学生管理（只读学生列表，无报名信息）、活动管理和数据报表（仅总体统计），与 legacy 一致。
+ * 学生管理（只读学生列表，无报名信息）、活动管理、问卷管理（仅可编辑活动的问卷）
+ * 和数据报表（仅总体统计）。
  * 学分查询/导出在“合格情况”标签页；学生报名信息并入“学生管理”。
  */
 export function AdminDashboard() {
@@ -28,17 +30,17 @@ export function AdminDashboard() {
           {isSystemAdmin ? <TabsTrigger value="settings">系统设置</TabsTrigger> : null}
           <TabsTrigger value="activities">活动管理</TabsTrigger>
           <TabsTrigger value="report">数据报表</TabsTrigger>
+          <TabsTrigger value="feedback">学生反馈</TabsTrigger>
           {isSystemAdmin ? <TabsTrigger value="qualification">合格情况</TabsTrigger> : null}
-          {isSystemAdmin ? (
-            <TabsTrigger value="__questionnaires" asChild>
-              <Link to="/admin/questionnaires" className="text-primary">
-                <span className="inline-flex items-center gap-1">
-                  <ClipboardList className="h-4 w-4" />
-                  问卷管理
-                </span>
-              </Link>
-            </TabsTrigger>
-          ) : null}
+          {/* 问卷管理对普通管理员开放：绑定活动的问卷权限同活动（后端过滤列表与操作） */}
+          <TabsTrigger value="__questionnaires" asChild>
+            <Link to="/admin/questionnaires" className="text-primary">
+              <span className="inline-flex items-center gap-1">
+                <ClipboardList className="h-4 w-4" />
+                问卷管理
+              </span>
+            </Link>
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="students">
@@ -59,6 +61,10 @@ export function AdminDashboard() {
           <ReportSection />
         </TabsContent>
 
+        <TabsContent value="feedback">
+          <FeedbackSection />
+        </TabsContent>
+
         {isSystemAdmin ? (
           <TabsContent value="qualification">
             <QualificationSection />
@@ -68,7 +74,7 @@ export function AdminDashboard() {
 
       {!isSystemAdmin ? (
         <p className="mt-6 text-center text-sm text-[#999]">
-          普通管理员可查看学生列表、管理活动和查看总体统计；其余功能仅系统管理员可用。
+          普通管理员可查看学生列表、管理活动、管理可编辑活动的问卷并查看总体统计；其余功能仅系统管理员可用。
         </p>
       ) : null}
     </div>

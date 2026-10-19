@@ -76,11 +76,13 @@ def test_admin_two_step_and_legacy_login(app, database, seed_legacy_payload, min
     assert info.get_json()["role"] == "system_admin"
 
     # legacy 登录端点同样进入 OTP 步骤而不是直接放行
-    # （先通过 login fixture 为普通管理员绑定 OTP）
+    # （先通过 login fixture 为普通管理员绑定 OTP；换一个未信任的 IP 发起，
+    #  否则该账号在 127.0.0.1 上处于一周信任期会直接发令牌）
     login("admin", "adminpass", "admin")
     legacy = client.post(
         "/api/login/admin",
         json={"username": "admin", "password_hash": client_password_digest("adminpass")},
+        environ_overrides={"REMOTE_ADDR": "203.0.113.9"},
     )
     assert legacy.status_code == 200
     assert legacy.get_json()["otp_required"] is True
@@ -331,3 +333,103 @@ def test_student_self_otp_reset_requires_code(app, database, seed_legacy_payload
     assert ok.get_json()["success"] is True
     database.session.refresh(student)
     assert get_totp_secret(student) == bundle["otp_secret"] != old_otp
+
+
+def test_trusted_device_skips_otp_for_a_week(app, database, seed_legacy_payload, minimal_payload):
+    """OTP 验证成功后，一周内同设备（Cookie）或同 IP 登录第一步直接发令牌。"""
+    seed_legacy_payload(minimal_payload)
+    from datetime import datetime, timedelta
+
+    from backend.models import TrustedDevice
+
+    client = app.test_client()
+    # 首次登录：仍需 OTP（学生未绑定时自动发绑定邮件）
+    step1 = _step1(client, "1001", "pass123", "student")
+    assert step1.get_json()["otp_required"] is True
+    student = database.session.get(Student, "1001")
+    secret = get_totp_secret(student)
+    step2 = client.post(
+        "/api/auth/token/verify",
+        json={"otp_ticket": step1.get_json()["otp_ticket"], "otp_code": pyotp.TOTP(secret).now()},
+    )
+    assert step2.get_json()["success"] is True
+    # 验证成功后写入信任记录并下发设备 Cookie
+    assert "trusted_device" in step2.headers.get("Set-Cookie", "")
+    rows = TrustedDevice.query.filter_by(user_type="student", account_id="1001").all()
+    assert len(rows) == 1
+    assert rows[0].expires_at > datetime.now() + timedelta(days=6)
+
+    # 同设备（带 Cookie）：第一步直接发令牌
+    again = _step1(client, "1001", "pass123", "student")
+    assert again.status_code == 200
+    assert again.get_json().get("access_token")
+    assert not again.get_json().get("otp_required")
+
+    # 无 Cookie 但同 IP（换浏览器、网络未变）：同样免 OTP
+    other_browser = app.test_client()
+    by_ip = other_browser.post(
+        "/api/auth/token",
+        data={
+            "grant_type": "password",
+            "username": "1001",
+            "password": client_password_digest("pass123"),
+            "user_type": "student",
+        },
+    )
+    assert by_ip.get_json().get("access_token")
+
+    # 信任是账号级的：同 IP 的别的账号仍要 OTP
+    other_account = other_browser.post(
+        "/api/auth/token",
+        data={
+            "grant_type": "password",
+            "username": "1002",
+            "password": client_password_digest("pass456"),
+            "user_type": "student",
+        },
+    )
+    assert other_account.get_json()["otp_required"] is True
+
+    # 信任过期后恢复 OTP 两步（惰性清理会把过期行删掉）
+    rows[0].expires_at = datetime.now() - timedelta(seconds=1)
+    database.session.commit()
+    expired = _step1(client, "1001", "pass123", "student")
+    assert expired.get_json()["otp_required"] is True
+    assert TrustedDevice.query.filter_by(user_type="student", account_id="1001").count() == 0
+
+
+def test_otp_reset_revokes_trusted_login(
+    app, database, seed_legacy_payload, minimal_payload, login
+):
+    """OTP 被重置后，信任期内的 IP/设备也必须重新过 OTP（修复静默绕过漏洞）。"""
+    seed_legacy_payload(minimal_payload)
+    from backend.models import TrustedDevice
+
+    client = app.test_client()
+    # 学生完成一次 OTP 验证，进入信任期
+    step1 = _step1(client, "1001", "pass123", "student")
+    student = database.session.get(Student, "1001")
+    secret = get_totp_secret(student)
+    step2 = client.post(
+        "/api/auth/token/verify",
+        json={"otp_ticket": step1.get_json()["otp_ticket"], "otp_code": pyotp.TOTP(secret).now()},
+    )
+    assert step2.get_json()["success"] is True
+    assert TrustedDevice.query.filter_by(user_type="student", account_id="1001").count() == 1
+    # 信任期内同 IP 免 OTP
+    assert _step1(client, "1001", "pass123", "student").get_json().get("access_token")
+
+    # 系统管理员将该学生 OTP 置为未绑定 → 信任记录立即作废
+    system = login("system", "adminpass", "admin")
+    reset = client.post(
+        "/api/admin/students/reset_otp",
+        json={"student_id": "1001"},
+        headers={"Authorization": system},
+    )
+    assert reset.get_json()["success"] is True
+    assert TrustedDevice.query.filter_by(user_type="student", account_id="1001").count() == 0
+
+    # 同 IP 再登录：必须重新过 OTP（未绑定则自动经邮箱重绑，邮件已打桩）
+    after = _step1(client, "1001", "pass123", "student")
+    assert after.get_json()["otp_required"] is True
+    assert not after.get_json().get("access_token")

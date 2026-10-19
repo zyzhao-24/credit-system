@@ -30,6 +30,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { OtpBundleDialog } from "@/components/OtpBundleDialog";
 import { Field } from "@/components/common";
 import { QualifiedBadge } from "@/components/StatusBadge";
+import { StudentFeedbackSection } from "./StudentFeedbackSection";
 
 /** 学生主页：我的学分、活动列表、账号安全（密码/OTP）、导出 PDF。 */
 export function StudentDashboard() {
@@ -78,6 +79,7 @@ export function StudentDashboard() {
             活动列表
           </TabsTrigger>
           <TabsTrigger value="password">账号安全</TabsTrigger>
+          <TabsTrigger value="feedback">问题反馈</TabsTrigger>
           <TabsTrigger value="__questionnaire" asChild>
             <Link to="/student/profile" className="text-success">
               <span className="inline-flex items-center gap-1">
@@ -114,6 +116,10 @@ export function StudentDashboard() {
             />
             <ChangeOtpCard />
           </div>
+        </TabsContent>
+
+        <TabsContent value="feedback">
+          <StudentFeedbackSection />
         </TabsContent>
       </Tabs>
     </div>

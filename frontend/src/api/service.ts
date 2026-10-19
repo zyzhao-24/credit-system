@@ -14,12 +14,19 @@ import type {
   AvailableQuestionnaire,
   BatchImportResult,
   CategoryInfo,
+  CheckedInMissingStudent,
   CreditReport,
   CustomAnswers,
   CustomQuestion,
+  FeedbackAdjustment,
+  FeedbackItem,
+  FeedbackMatch,
+  FeedbackActivityOption,
+  FeedbackType,
   LoginStepOneResponse,
   MyRegistration,
   OtpBindChallenge,
+  QuestionnaireBody,
   StudentActivities,
   StudentProfile,
   TokenResponse,
@@ -219,6 +226,18 @@ export async function cancelQuestionnaire(responseId: string): Promise<BasicResp
   return data;
 }
 
+/** 学生现场签到（签到码来自管理员展示/扫码链接） */
+export async function checkinQuestionnaire(
+  questionnaireId: string,
+  code: string,
+): Promise<BasicResponse & { checkin_state?: "valid" | "pending" | null }> {
+  const { data } = await api.post<BasicResponse & { checkin_state?: "valid" | "pending" | null }>(
+    `/api/student/questionnaire/${questionnaireId}/checkin`,
+    { code },
+  );
+  return data;
+}
+
 // ========== 管理端：学生 ==========
 
 export async function getAdminStudents(): Promise<{
@@ -309,6 +328,15 @@ export async function createCategory(payload: {
   required_credits: number;
 }): Promise<BasicResponse> {
   const { data } = await api.post<BasicResponse>("/api/admin/categories", payload);
+  return data;
+}
+
+/** 快速修改类别的合格学分。 */
+export async function updateCategory(payload: {
+  name: string;
+  required_credits: number;
+}): Promise<BasicResponse> {
+  const { data } = await api.put<BasicResponse>("/api/admin/categories", payload);
   return data;
 }
 
@@ -408,7 +436,6 @@ export async function getAdminActivities(): Promise<{
 
 export async function createActivity(payload: {
   name: string;
-  categories: string[];
   department: string;
 }): Promise<BasicResponse> {
   const { data } = await api.post<BasicResponse>("/api/admin/activities", payload);
@@ -417,7 +444,6 @@ export async function createActivity(payload: {
 
 export async function updateActivity(payload: {
   activity_id: string;
-  categories?: string[];
   department?: string;
   allowed_editors?: string[];
 }): Promise<BasicResponse> {
@@ -442,6 +468,7 @@ export async function getActivityRecords(
 export async function createRecord(payload: {
   activity_id: string;
   record_name: string;
+  categories: string[];
 }): Promise<BasicResponse & { record_id?: string }> {
   const { data } = await api.post<BasicResponse & { record_id?: string }>(
     "/api/admin/records",
@@ -450,9 +477,11 @@ export async function createRecord(payload: {
   return data;
 }
 
-export async function renameRecord(payload: {
+/** 编辑记录：名称与可行类别均可改；缩减类别时若仍有条目使用被移除的类别会被拒绝。 */
+export async function updateRecord(payload: {
   record_id: string;
-  record_name: string;
+  record_name?: string;
+  categories?: string[];
 }): Promise<BasicResponse> {
   const { data } = await api.put<BasicResponse>("/api/admin/records", payload);
   return data;
@@ -563,13 +592,15 @@ export async function getAllQuestionnaires(): Promise<{
 
 export async function createQuestionnaireTemplate(payload: {
   activity_id: string;
+  record_id: string;
   title: string;
   start_time: string;
   end_time: string;
   max_participants: number;
   custom_questions: CustomQuestion[];
-}): Promise<BasicResponse> {
-  const { data } = await api.post<BasicResponse>(
+  body?: QuestionnaireBody;
+}): Promise<BasicResponse & { questionnaire_id?: string }> {
+  const { data } = await api.post<BasicResponse & { questionnaire_id?: string }>(
     "/api/admin/questionnaire/create_template",
     payload,
   );
@@ -583,10 +614,12 @@ export async function updateQuestionnaireTemplate(
     start_time: string;
     end_time: string;
     max_participants: number;
+    record_id?: string;
     custom_questions: CustomQuestion[];
+    body?: QuestionnaireBody;
   },
-): Promise<BasicResponse> {
-  const { data } = await api.put<BasicResponse>(
+): Promise<BasicResponse & { version?: number }> {
+  const { data } = await api.put<BasicResponse & { version?: number }>(
     `/api/admin/questionnaire/template/${questionnaireId}`,
     payload,
   );
@@ -620,5 +653,155 @@ export async function updateResponse(
 
 export async function deleteResponse(responseId: string): Promise<BasicResponse> {
   const { data } = await api.delete<BasicResponse>(`/api/admin/questionnaire/response/${responseId}`);
+  return data;
+}
+
+// ========== 管理端：现场签到 ==========
+
+export async function openCheckin(questionnaireId: string): Promise<BasicResponse> {
+  const { data } = await api.post<BasicResponse>(
+    `/api/admin/questionnaire/${questionnaireId}/checkin/open`,
+  );
+  return data;
+}
+
+export async function closeCheckin(questionnaireId: string): Promise<BasicResponse> {
+  const { data } = await api.post<BasicResponse>(
+    `/api/admin/questionnaire/${questionnaireId}/checkin/close`,
+  );
+  return data;
+}
+
+export async function confirmCheckin(responseId: string): Promise<BasicResponse> {
+  const { data } = await api.post<BasicResponse>(
+    `/api/admin/questionnaire/response/${responseId}/checkin/confirm`,
+  );
+  return data;
+}
+
+/** 为单个报名者手动生成一次性签到码（候补默认不分配，由管理员逐人生成） */
+export async function generateCheckinCode(
+  responseId: string,
+): Promise<BasicResponse & { checkin_code?: string }> {
+  const { data } = await api.post<BasicResponse & { checkin_code?: string }>(
+    `/api/admin/questionnaire/response/${responseId}/checkin/code`,
+  );
+  return data;
+}
+
+/** 取消学生的签到（签到开启时会补发新的一次性码，学生可重新签到） */
+export async function cancelCheckin(responseId: string): Promise<BasicResponse> {
+  const { data } = await api.post<BasicResponse>(
+    `/api/admin/questionnaire/response/${responseId}/checkin/cancel`,
+  );
+  return data;
+}
+
+export async function setResponseAbsent(
+  responseId: string,
+  absent: boolean,
+): Promise<BasicResponse> {
+  const { data } = await api.post<BasicResponse>(
+    `/api/admin/questionnaire/response/${responseId}/absent`,
+    { absent },
+  );
+  return data;
+}
+
+/** 已签到（有效）但该记录下还没有条目的学生 */
+export async function getCheckedInMissing(
+  recordId: string,
+): Promise<{ success: boolean; students: CheckedInMissingStudent[] }> {
+  const { data } = await api.get(`/api/admin/records/${recordId}/checked_in_missing`);
+  return data;
+}
+
+// ========== 反馈（BUG / 活动漏录） ==========
+
+export async function submitFeedback(payload: {
+  type: FeedbackType;
+  content?: string;
+  activity_name?: string;
+  record_name?: string;
+  credits?: number;
+  categories?: string[];
+  evidence?: string;
+}): Promise<BasicResponse> {
+  const { data } = await api.post<BasicResponse>("/api/student/feedback", payload);
+  return data;
+}
+
+/** 修改自己待处理的 BUG 反馈 */
+export async function editFeedback(
+  feedbackId: string,
+  content: string,
+): Promise<BasicResponse> {
+  const { data } = await api.put<BasicResponse>(`/api/student/feedback/${feedbackId}`, {
+    content,
+  });
+  return data;
+}
+
+/** 漏录填写时的活动重合提示（朴素字符匹配） */
+export async function matchFeedbackActivities(
+  activityName: string,
+): Promise<{ success: boolean; matches: FeedbackMatch[] }> {
+  const { data } = await api.post("/api/student/feedback/match", {
+    activity_name: activityName,
+  });
+  return data;
+}
+
+export async function getMyFeedback(): Promise<{
+  success: boolean;
+  feedbacks: FeedbackItem[];
+  missing_open: boolean;
+}> {
+  const { data } = await api.get("/api/student/feedback");
+  return data;
+}
+
+/** 漏录申请的选项数据：全部活动及各自记录的可行类别 */
+export async function getFeedbackActivityOptions(): Promise<{
+  success: boolean;
+  activities: FeedbackActivityOption[];
+}> {
+  const { data } = await api.get("/api/student/feedback/activities");
+  return data;
+}
+
+export async function getAdminFeedback(): Promise<{
+  success: boolean;
+  feedbacks: FeedbackItem[];
+  missing_open: boolean;
+}> {
+  const { data } = await api.get("/api/admin/feedback");
+  return data;
+}
+
+/** 开启/关闭集中活动反馈（开启期间学生才能提交活动漏录申请） */
+export async function setMissingFeedbackOpen(
+  open: boolean,
+): Promise<BasicResponse & { missing_open?: boolean }> {
+  const { data } = await api.post<BasicResponse & { missing_open?: boolean }>(
+    "/api/admin/feedback/missing_open",
+    { open },
+  );
+  return data;
+}
+
+/** 处理反馈：reply=回复BUG并结案；record=核定并记录；reject=拒绝；reopen=重新打开 */
+export async function handleFeedback(
+  feedbackId: string,
+  payload: {
+    action: "reply" | "record" | "reject" | "reopen";
+    reply?: string;
+    adjustment?: FeedbackAdjustment;
+  },
+): Promise<BasicResponse> {
+  const { data } = await api.post<BasicResponse>(
+    `/api/admin/feedback/${feedbackId}/handle`,
+    payload,
+  );
   return data;
 }

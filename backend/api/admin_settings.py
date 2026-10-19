@@ -199,7 +199,7 @@ def manage_admins():
         if admin is None:
             return _error("管理员不存在")
         if admin_id == SYSTEM_ADMIN_ID:
-            return _error("system 账号的密码与 OTP 只能通过 manage.py 命令修改")
+            return _error("system 账号的密码与 OTP 只能通过本机维护页 /local/system 修改")
         if admin_id == current_admin_id and "department" in data:
             return _error("不能修改自己的部门")
         if "password" in data:

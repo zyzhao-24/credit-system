@@ -7,12 +7,14 @@ credit entries for students who are not present in the student table.
 from backend.extensions import db
 
 
-class ActivityCategory(db.Model):
-    __tablename__ = "activity_categories"
+class RecordCategory(db.Model):
+    """记录一级的学分类别：条目类别必须从记录类别中选择。"""
 
-    activity_id = db.Column(
+    __tablename__ = "record_categories"
+
+    record_id = db.Column(
         db.String(36),
-        db.ForeignKey("activities.activity_id", ondelete="CASCADE"),
+        db.ForeignKey("records.record_id", ondelete="CASCADE"),
         primary_key=True,
     )
     category_name = db.Column(
@@ -22,7 +24,7 @@ class ActivityCategory(db.Model):
     )
     position = db.Column(db.Integer, nullable=False, default=0)
 
-    activity = db.relationship("Activity", back_populates="category_links")
+    record = db.relationship("Record", back_populates="category_links")
     category = db.relationship("Category")
 
 
@@ -58,12 +60,6 @@ class Activity(db.Model):
     max_participants = db.Column(db.Integer, nullable=False, default=0)
     position = db.Column(db.Integer, nullable=False, default=0)
 
-    category_links = db.relationship(
-        "ActivityCategory",
-        back_populates="activity",
-        cascade="all, delete-orphan",
-        order_by="ActivityCategory.position",
-    )
     allowed_editor_links = db.relationship(
         "ActivityAllowedEditor",
         back_populates="activity",
@@ -79,14 +75,13 @@ class Activity(db.Model):
 
     @property
     def categories(self) -> list[str]:
-        return [link.category_name for link in self.category_links]
-
-    @categories.setter
-    def categories(self, names: list[str]) -> None:
-        self.category_links = [
-            ActivityCategory(category_name=name, position=index)
-            for index, name in enumerate(names)
-        ]
+        """活动类别是各记录类别的并集（按记录、类别的声明顺序去重）。"""
+        names: list[str] = []
+        for record in self.records:
+            for name in record.categories:
+                if name not in names:
+                    names.append(name)
+        return names
 
     @property
     def allowed_editors(self) -> list[str]:
@@ -114,12 +109,29 @@ class Record(db.Model):
     position = db.Column(db.Integer, nullable=False, default=0)
 
     activity = db.relationship("Activity", back_populates="records")
+    category_links = db.relationship(
+        "RecordCategory",
+        back_populates="record",
+        cascade="all, delete-orphan",
+        order_by="RecordCategory.position",
+    )
     entries = db.relationship(
         "Entry",
         back_populates="record",
         cascade="all, delete-orphan",
         order_by="Entry.position",
     )
+
+    @property
+    def categories(self) -> list[str]:
+        return [link.category_name for link in self.category_links]
+
+    @categories.setter
+    def categories(self, names: list[str]) -> None:
+        self.category_links = [
+            RecordCategory(category_name=name, position=index)
+            for index, name in enumerate(names)
+        ]
 
 
 class EntryCategory(db.Model):

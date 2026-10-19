@@ -35,14 +35,29 @@ fi
 
 # Check dependencies with the same interpreter that will run the server
 if ! "$PYTHON" -c "import waitress, flask, flask_sqlalchemy, flask_cors, flask_migrate, jwt, cryptography, dotenv, openpyxl" &> /dev/null; then
-    echo "[INFO] Installing dependencies into the project environment..."
-    "$PYTHON" -m pip install -r requirements.txt || { echo "[ERROR] Dependency install failed"; exit 1; }
+    echo "[INFO] Syncing dependencies with uv..."
+    uv sync || { echo "[ERROR] Dependency install failed - install uv first: https://docs.astral.sh/uv/"; exit 1; }
+    # uv sync creates .venv; switch to it if the script started without one
+    if [ -f ".venv/Scripts/python.exe" ]; then
+        PYTHON=".venv/Scripts/python.exe"
+    elif [ -f ".venv/bin/python" ]; then
+        PYTHON=".venv/bin/python"
+    fi
 fi
 
-# SECRET_KEY is required in production mode (from environment or .env)
-if [ -z "$SECRET_KEY" ] && ! grep -q "^SECRET_KEY=" .env 2>/dev/null; then
-    echo "[ERROR] SECRET_KEY is not set in the environment or .env"
-    echo "        Set it first: export SECRET_KEY=<random-long-string>"
+# Load configuration from .env into environment variables
+if [ ! -f .env ]; then
+    echo "[ERROR] .env not found - copy .env.example to .env and fill it in"
+    exit 1
+fi
+set -a
+. ./.env
+set +a
+
+# SECRET_KEY is required in production mode
+if [ -z "$SECRET_KEY" ]; then
+    echo "[ERROR] SECRET_KEY is missing in .env or the environment"
+    echo "        Add SECRET_KEY=<random-long-string> to .env"
     exit 1
 fi
 
@@ -81,6 +96,11 @@ echo "  ./status.sh - Check status"
 echo "  ./logs.sh   - View logs"
 echo "  ./stop_server.sh - Stop server"
 echo ""
-echo "Student: http://localhost:5000/login"
-echo "Admin:   http://localhost:5000/admin/login"
+if [ -f instance/tls.crt ]; then
+    echo "Student: https://localhost:5000/login"
+    echo "Admin:   https://localhost:5000/admin/login"
+else
+    echo "Student: http://localhost:5000/login"
+    echo "Admin:   http://localhost:5000/admin/login"
+fi
 echo ""

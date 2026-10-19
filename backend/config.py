@@ -16,15 +16,31 @@ def _sqlite_uri(path: Path) -> str:
     return f"sqlite:///{path.as_posix()}"
 
 
+def _database_uri() -> str:
+    """DATABASE_URL 里的相对 sqlite 路径一律按项目根目录解析。
+
+    Flask-SQLAlchemy 会把相对 sqlite 路径解析到 instance_path 下，
+    导致 `sqlite:///instance/credit_system.db` 变成 instance/instance/...
+    在这里统一锚定到 BASE_DIR，避免歧义。
+    """
+    url = os.getenv("DATABASE_URL")
+    if not url:
+        return _sqlite_uri(BASE_DIR / "instance" / "credit_system.db")
+    prefix = "sqlite:///"
+    if url.startswith(prefix):
+        path = Path(url[len(prefix):])
+        if not path.is_absolute():
+            path = BASE_DIR / path
+        return _sqlite_uri(path)
+    return url
+
+
 class Config:
     """Default configuration suitable for local development."""
 
     ENV = os.getenv("FLASK_ENV", "development")
     SECRET_KEY = os.getenv("SECRET_KEY", "dev-only-change-me")
-    SQLALCHEMY_DATABASE_URI = os.getenv(
-        "DATABASE_URL",
-        _sqlite_uri(BASE_DIR / "instance" / "credit_system.db"),
-    )
+    SQLALCHEMY_DATABASE_URI = _database_uri()
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ENGINE_OPTIONS = {"connect_args": {"timeout": 5}}
     JWT_EXPIRES_SECONDS = int(os.getenv("JWT_EXPIRES_SECONDS", "43200"))

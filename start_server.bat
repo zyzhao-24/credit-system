@@ -1,9 +1,10 @@
 @echo off
 setlocal enabledelayedexpansion
+REM Always run from the script's own directory (relative paths in .env depend on it)
+cd /d "%~dp0"
 
 set PID_FILE=server.pid
 set LOG_FILE=server.log
-set SECRET_KEY=1145141919810
 
 echo ========================================
 echo Tuanxiao Credit System - Start Server
@@ -46,24 +47,33 @@ if errorlevel 1 (
 REM Check dependencies with the same interpreter that will run the server
 %PYTHON% -c "import waitress, flask, flask_sqlalchemy, flask_cors, flask_migrate, jwt, cryptography, dotenv, openpyxl" >nul 2>&1
 if errorlevel 1 (
-    echo [INFO] Installing dependencies into the project environment...
-    %PYTHON% -m pip install -r requirements.txt
+    echo [INFO] Syncing dependencies with uv...
+    uv sync
     if errorlevel 1 (
-        echo [ERROR] Dependency install failed
+        echo [ERROR] Dependency install failed - install uv first: https://docs.astral.sh/uv/
         pause
         exit /b 1
     )
+    REM uv sync creates .venv; switch to it if the script started without one
+    if exist .venv\Scripts\python.exe set PYTHON=.venv\Scripts\python.exe
 )
 
-REM SECRET_KEY is required in production mode (from environment or .env)
+REM Load configuration from .env into environment variables
+if not exist .env (
+    echo [ERROR] .env not found - copy .env.example to .env and fill it in
+    pause
+    exit /b 1
+)
+for /f "usebackq eol=# tokens=1,* delims==" %%A in (".env") do (
+    if not "%%A"=="" set "%%A=%%B"
+)
+
+REM SECRET_KEY is required in production mode
 if "%SECRET_KEY%"=="" (
-    findstr /C:"SECRET_KEY=" .env >nul 2>&1
-    if errorlevel 1 (
-        echo [ERROR] SECRET_KEY is not set in the environment or .env
-        echo         Set it first: set SECRET_KEY=^<random-long-string^>
-        pause
-        exit /b 1
-    )
+    echo [ERROR] SECRET_KEY is missing in .env or the environment
+    echo         Add SECRET_KEY=^<random-long-string^> to .env
+    pause
+    exit /b 1
 )
 
 REM Start server (deploy_server.py writes its own PID file)
@@ -74,7 +84,7 @@ start "DeployServer" /B cmd /c "%PYTHON% deploy_server.py >> "%LOG_FILE%" 2>&1"
 REM Wait for the server process to write its PID
 set SERVER_PID=
 for /L %%i in (1,1,10) do (
-    timeout /t 1 /nobreak >nul
+    "%SystemRoot%\System32\timeout.exe" /t 1 /nobreak >nul
     if exist %PID_FILE% (
         set /p SERVER_PID=<%PID_FILE%
         goto :gotpid
@@ -102,6 +112,11 @@ echo   status.bat  - Check status
 echo   logs.bat    - View logs
 echo   stop_server.bat - Stop server
 echo.
-echo Student: http://localhost:5000/login
-echo Admin:   http://localhost:5000/admin/login
+if exist instance\tls.crt (
+    echo Student: https://localhost:5000/login
+    echo Admin:   https://localhost:5000/admin/login
+) else (
+    echo Student: http://localhost:5000/login
+    echo Admin:   http://localhost:5000/admin/login
+)
 echo.

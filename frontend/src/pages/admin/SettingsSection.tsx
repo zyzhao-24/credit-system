@@ -16,6 +16,7 @@ import {
   resetAdminOtp,
   saveTotalCredits,
   updateAdmin,
+  updateCategory,
 } from "@/api/service";
 import { useAuth } from "@/auth/auth-context";
 import type { AdminAccount, AdminCategory, AdminOtpBundle, OtpBindChallenge } from "@/api/types";
@@ -51,6 +52,58 @@ export function SettingsSection() {
 }
 
 // ========== 类别管理 ==========
+
+/** 合格学分的行内快速编辑：改动后出现保存按钮，回车也可保存。 */
+function CategoryCreditsCell({ category, onSaved }: { category: AdminCategory; onSaved: () => void }) {
+  const [value, setValue] = useState(String(category.required_credits));
+  const [saving, setSaving] = useState(false);
+  const dirty = value.trim() !== "" && value !== String(category.required_credits);
+
+  const save = async () => {
+    if (!dirty || saving) return;
+    setSaving(true);
+    try {
+      const result = await updateCategory({
+        name: category.name,
+        required_credits: parseFloat(value) || 0,
+      });
+      if (result.success) {
+        toast.success(`「${category.name}」合格学分已更新`);
+        onSaved();
+      } else {
+        toast.error(result.message || "保存失败");
+      }
+    } catch (error) {
+      toast.error(errorMessage(error, "保存失败"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-2">
+      <Input
+        type="number"
+        step="0.1"
+        min="0"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            void save();
+          }
+        }}
+        className="h-8 w-24"
+      />
+      {dirty ? (
+        <Button size="sm" onClick={save} disabled={saving}>
+          {saving ? "保存中..." : "保存"}
+        </Button>
+      ) : null}
+    </div>
+  );
+}
 
 function CategoriesBlock() {
   const [categories, setCategories] = useState<AdminCategory[]>([]);
@@ -109,7 +162,13 @@ function CategoriesBlock() {
             {categories.map((category) => (
               <TableRow key={category.name}>
                 <TableCell>{category.name}</TableCell>
-                <TableCell>{category.required_credits}</TableCell>
+                <TableCell>
+                  <CategoryCreditsCell
+                    key={`${category.name}-${category.required_credits}`}
+                    category={category}
+                    onSaved={load}
+                  />
+                </TableCell>
                 <TableCell>
                   <Button size="sm" variant="danger" onClick={() => setDeleteTarget(category.name)}>
                     删除

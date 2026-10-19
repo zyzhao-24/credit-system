@@ -3,10 +3,10 @@
 from backend.models.activity import (  # noqa: F401
     Activity,
     ActivityAllowedEditor,
-    ActivityCategory,
     Entry,
     EntryCategory,
     Record,
+    RecordCategory,
 )
 from backend.models.core import (  # noqa: F401
     Admin,
@@ -16,7 +16,9 @@ from backend.models.core import (  # noqa: F401
     EmailVerification,
     Setting,
     Student,
+    TrustedDevice,
 )
+from backend.models.feedback import Feedback  # noqa: F401
 from backend.models.questionnaire import (  # noqa: F401
     ActivityQuestionnaire,
     QuestionnaireResponse,

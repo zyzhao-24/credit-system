@@ -3,10 +3,14 @@
 Login is a mandatory two-step flow: password first, TOTP code second.
 Step 1 returns a short-lived otp_ticket (10 minutes) which step 2 exchanges
 for the real access token.
+
+OTP 验证成功后，账号会信任当时的来源 IP 与一枚设备 Cookie（HttpOnly），
+一周内同一 IP 或同一设备浏览器再次登录时第一步直接发令牌，不再索要 OTP。
 """
 
 from __future__ import annotations
 
+import hashlib
 import re
 import secrets
 import threading
@@ -19,7 +23,7 @@ from flask import Blueprint, current_app, g, jsonify, request
 from backend.auth.decorators import require_auth, require_admin
 from backend.auth.jwt import decode_token, issue_token
 from backend.extensions import db
-from backend.models import Admin, EmailVerification, Student
+from backend.models import Admin, EmailVerification, Student, TrustedDevice
 from backend.services import mail_templates
 from backend.services.emailer import send_email
 from backend.services.otp_service import (
@@ -50,6 +54,9 @@ _reset_attempts: dict[str, list[float]] = {}
 _reset_lock = threading.Lock()
 
 OTP_TICKET_SECONDS = 600
+# OTP 信任期：验证成功后一周内同 IP / 同设备免 OTP
+TRUSTED_DEVICE_DAYS = 7
+TRUSTED_DEVICE_COOKIE = "trusted_device"
 _VERIFY_CODE_TTL_MINUTES = 10
 _VERIFY_CODE_MAX_ATTEMPTS = 5
 _VERIFY_CODE_WINDOW_SECONDS = 600
@@ -131,6 +138,58 @@ def _token_payload(identity: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _account_id_of(account: Student | Admin) -> str:
+    return account.student_id if isinstance(account, Student) else account.admin_id
+
+
+def _device_token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _trusted_login(account: Student | Admin, user_type: str) -> bool:
+    """该账号在当前 IP 或当前设备浏览器上是否处于 OTP 信任期内。
+
+    顺带惰性清理该账号已过期的信任记录。
+    """
+    now = datetime.now()
+    rows = TrustedDevice.query.filter_by(
+        user_type=user_type, account_id=_account_id_of(account)
+    ).all()
+    expired = [row for row in rows if row.expires_at <= now]
+    for row in expired:
+        db.session.delete(row)
+    if expired:
+        db.session.commit()
+    active = [row for row in rows if row.expires_at > now]
+    if not active:
+        return False
+    cookie_token = request.cookies.get(TRUSTED_DEVICE_COOKIE, "")
+    if cookie_token:
+        token_hash = _device_token_hash(cookie_token)
+        if any(row.token_hash == token_hash for row in active):
+            return True
+    remote_ip = request.remote_addr or ""
+    return bool(remote_ip) and any(row.ip == remote_ip for row in active)
+
+
+def _remember_trusted_device(account: Student | Admin, user_type: str) -> str:
+    """OTP 验证成功后调用：写入信任记录，返回要发给浏览器的设备令牌。"""
+    token = secrets.token_urlsafe(32)
+    now = datetime.now()
+    db.session.add(
+        TrustedDevice(
+            user_type=user_type,
+            account_id=_account_id_of(account),
+            token_hash=_device_token_hash(token),
+            ip=request.remote_addr or "",
+            created_at=now,
+            expires_at=now + timedelta(days=TRUSTED_DEVICE_DAYS),
+        )
+    )
+    db.session.commit()
+    return token
+
+
 def _otp_required_response(account: Student | Admin, user_type: str):
     """Start the OTP step: bind-and-email students who have no secret yet."""
     if not has_totp(account):
@@ -202,6 +261,10 @@ def oauth2_token():
         raise
     if account is None:
         return jsonify({"detail": "账号或密码错误"}), 401
+    # 一周内验证过 OTP 的 IP / 设备：直接发令牌，不再索要 OTP
+    if _trusted_login(account, user_type):
+        identity = _identity_for(account, user_type)
+        return jsonify({"success": True, **_token_payload(identity)})
     return _otp_required_response(account, user_type)
 
 
@@ -228,10 +291,20 @@ def oauth2_token_verify():
 
     try:
         identity = _identity_for(account, user_type)
+        device_token = _remember_trusted_device(account, user_type)
     except Exception:
         db.session.rollback()
         raise
-    return jsonify({"success": True, **_token_payload(identity)})
+    response = jsonify({"success": True, **_token_payload(identity)})
+    # 设备令牌：一周内该设备浏览器（或同 IP）登录免 OTP；HttpOnly 防 JS 读取
+    response.set_cookie(
+        TRUSTED_DEVICE_COOKIE,
+        device_token,
+        max_age=TRUSTED_DEVICE_DAYS * 86400,
+        httponly=True,
+        samesite="Lax",
+    )
+    return response
 
 
 def _legacy_login(user_type: str):
@@ -241,6 +314,9 @@ def _legacy_login(user_type: str):
     account = _check_password(user_type, username, password_digest)
     if account is None:
         return _json_error("学号或密码错误" if user_type == "student" else "账号或密码错误")
+    if _trusted_login(account, user_type):
+        identity = _identity_for(account, user_type)
+        return jsonify({"success": True, **_token_payload(identity)})
     return _otp_required_response(account, user_type)
 
 

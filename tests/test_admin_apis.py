@@ -159,7 +159,7 @@ def test_activity_permission_holes_are_closed(app, database, seed_legacy_payload
 
     created = client.post(
         "/api/admin/activities",
-        json={"name": "系统活动", "categories": ["思想品德"], "department": "团委"},
+        json={"name": "系统活动", "department": "团委"},
         headers={"Authorization": system_token},
     )
     assert created.status_code == 200
@@ -174,7 +174,7 @@ def test_activity_permission_holes_are_closed(app, database, seed_legacy_payload
 
     record = client.post(
         "/api/admin/records",
-        json={"activity_id": activity_id, "record_name": "记录"},
+        json={"activity_id": activity_id, "record_name": "记录", "categories": ["思想品德"]},
         headers={"Authorization": system_token},
     )
     record_id = record.get_json()["record_id"]
@@ -243,3 +243,83 @@ def test_record_detail_and_batch_entry_flow(app, database, seed_legacy_payload, 
         headers={"Authorization": token},
     )
     assert deleted.get_json()["deleted"] == 1
+
+
+def test_record_level_categories_model(app, database, seed_legacy_payload, minimal_payload, login):
+    """学分类别设在记录一级：活动类别=记录类别并集；条目类别 ⊆ 记录类别；缩减受冲突保护。"""
+    seed_legacy_payload(minimal_payload)
+    client = app.test_client()
+    token = login("system", "adminpass", "admin")
+    headers = {"Authorization": token}
+
+    # 创建活动不再指定类别；类别挂在记录上
+    activity_id = client.post(
+        "/api/admin/activities", json={"name": "建模活动"}, headers=headers
+    ).get_json()["activity_id"]
+
+    no_categories = client.post(
+        "/api/admin/records",
+        json={"activity_id": activity_id, "record_name": "空记录"},
+        headers=headers,
+    )
+    assert no_categories.get_json()["success"] is False
+
+    r1 = client.post(
+        "/api/admin/records",
+        json={"activity_id": activity_id, "record_name": "记录一", "categories": ["思想品德"]},
+        headers=headers,
+    ).get_json()["record_id"]
+    r2 = client.post(
+        "/api/admin/records",
+        json={"activity_id": activity_id, "record_name": "记录二", "categories": ["学业发展", "文体活动"]},
+        headers=headers,
+    ).get_json()["record_id"]
+
+    # 活动类别 = 记录类别并集（去重、按声明顺序）
+    activities = client.get("/api/admin/activities", headers=headers).get_json()["activities"]
+    activity = next(a for a in activities if a["activity_id"] == activity_id)
+    assert activity["categories"] == ["思想品德", "学业发展", "文体活动"]
+
+    # 条目类别必须在记录类别范围内
+    bad = client.post(
+        "/api/admin/entries",
+        json={"record_id": r1, "student_id": "1001", "credits": 1, "categories": ["文体活动"]},
+        headers=headers,
+    )
+    assert bad.get_json()["success"] is False
+    ok = client.post(
+        "/api/admin/entries",
+        json={"record_id": r1, "student_id": "1001", "credits": 1, "categories": ["思想品德"]},
+        headers=headers,
+    )
+    assert ok.get_json()["success"] is True
+
+    # 记录详情返回记录类别
+    detail = client.get(f"/api/admin/records/{r1}", headers=headers).get_json()["record"]
+    assert detail["categories"] == ["思想品德"]
+    assert detail["activity_categories"] == ["思想品德", "学业发展", "文体活动"]
+
+    # 缩减记录类别：仍有条目使用该类别时被拒绝；条目调整后可以缩减
+    conflict = client.put(
+        "/api/admin/records", json={"record_id": r1, "categories": ["学业发展"]}, headers=headers
+    )
+    assert conflict.get_json()["success"] is False
+    assert "思想品德" in conflict.get_json()["message"]
+    client.delete(
+        "/api/admin/entries",
+        json={"record_id": r1, "student_id": "1001"},
+        headers=headers,
+    )
+    shrunk = client.put(
+        "/api/admin/records", json={"record_id": r1, "categories": ["学业发展"]}, headers=headers
+    )
+    assert shrunk.get_json()["success"] is True
+    activities = client.get("/api/admin/activities", headers=headers).get_json()["activities"]
+    activity = next(a for a in activities if a["activity_id"] == activity_id)
+    assert activity["categories"] == ["学业发展", "文体活动"]
+
+    # 空记录 r2 改类别不受影响；删除记录后活动类别随之收缩
+    client.delete("/api/admin/records", json={"record_id": r2}, headers=headers)
+    activities = client.get("/api/admin/activities", headers=headers).get_json()["activities"]
+    activity = next(a for a in activities if a["activity_id"] == activity_id)
+    assert activity["categories"] == ["学业发展"]

@@ -4,26 +4,26 @@
 
 ## 快速开始
 
+后端环境用 [uv](https://docs.astral.sh/uv/) 管理（`pyproject.toml` + `uv.lock`）：
+
 ```bash
-# 1. 安装后端依赖
-pip install -r requirements.txt
+# 1. 安装后端依赖（自动创建 .venv 并安装全部依赖，含 pytest）
+uv sync
 
 # 2. 配置环境变量
 cp .env.example .env   # 编辑 SECRET_KEY（生产必须）
 
-# 3. 初始化管理员（确保内置 system 账号存在；首次创建时随机生成密码并打印一次）
-python init_admin.py
-
-# 3b. 首次部署后设置 system 的密码与 OTP（登录强制两步验证）：
-#     启动服务后在服务器本机用浏览器访问 http://localhost:5000/local/system
+# 3. 初始化管理员：无需脚本。首次启动时自动创建内置 system 账号
+#    （密码不落盘、不打印），启动服务后在服务器本机用浏览器访问
+#    http://localhost:5000/local/system 设置 system 密码并绑定 OTP（登录强制两步验证）
 
 # 4. 构建前端
 cd frontend && npm install && npm run build && cd ..
 
 # 5. 启动系统
-python run.py                      # 开发环境（Flask dev server，端口 5000）
-start_server.bat                   # 生产环境（Windows，Waitress）
-./start_server.sh                  # 生产环境（Linux，Waitress）
+uv run python run.py             # 开发环境（Flask dev server，端口 5000）
+start_server.bat                 # 生产环境（Windows，Waitress）
+./start_server.sh                # 生产环境（Linux，Waitress）
 
 # 前端开发模式（可选，Vite 端口 5173，/api 自动代理到 5000）
 cd frontend && npm run dev
@@ -34,21 +34,28 @@ cd frontend && npm run dev
 - 学生登录：http://localhost:5000/login
 - 管理员登录：http://localhost:5000/admin/login（固定路径）
 
+## HTTPS（自签名证书）
+
+`deploy_server.py` 启动前会自动生成自签名证书（`instance/tls.crt` / `tls.key`，
+SAN 含 localhost 与本机内网 IP），并以 cheroot 提供 HTTPS（端口不变）；
+仅当生成失败时才回退明文 HTTP。手动管理：
+
+```bash
+uv run python gen_cert.py --force  # 重签（内网 IP 变化或证书到期时）
+```
+
+自签名证书不受浏览器信任，访问时提示“不安全”属预期，点“高级 → 继续前往”即可
+（Firefox 可永久记住例外）；私钥在 `instance/` 下，不会进入版本库。
+如需彻底消除警告，可用域名 + Let's Encrypt DNS-01（内网 IP 也可签发）。
+
 ## 架构
 
 - **后端**：`backend/` —— Flask application factory + Blueprint 拆分（`backend/api/`），
   SQLAlchemy 2 + SQLite（WAL、busy_timeout、foreign_keys），JWT 认证（HS256，12 小时）。
 - **前端**：`frontend/` —— React 19 + TypeScript + Vite + Tailwind CSS 4 + Radix。
   生产模式由 Flask 直接托管 `frontend/dist` 并做 SPA fallback。
-- **遗留代码**：`legacy/` —— 重构前的单体 `app.py`、`database.py`、`models.py`、
-  `routes/`、模板和旧 JS，仅供审计与回滚参考，不再运行。
-- **脚本**：
-  - `scripts/migrate_json_to_sqlite.py` —— data.json → SQLite 迁移
-  - `scripts/verify_migration.py` —— 三层迁移验证
-  - `scripts/dump_sqlite_to_json.py` —— SQLite 导出为 legacy JSON 形状（回滚/审计）
-  - `scripts/compare_routes.py` —— legacy 与重构后 API 路由覆盖比对
-  - `scripts/smoke_api.py` —— 双角色 API 冒烟测试
-- **测试**：`python -m pytest tests/ -v`
+- **运行脚本**：`run.py`（开发）、`deploy_server.py` + `start/status/logs/stop/cleanup` 脚本（生产）。
+- **测试**：`uv run pytest`（配置在 `pyproject.toml`，含 pythonpath 与 testpaths）
 
 ## 两步验证（OTP）
 
@@ -73,11 +80,11 @@ OTP 绑定/重置统一遵循“验证才生效”原则：凡需要人手持新
   未绑定 OTP 的管理员无法登录，由系统管理员在后台”重置 OTP”生成二维码转交
   （弹窗带导出：下载二维码/复制密钥，二次确认后才写入目标账号）。
 - **system 账号**：内置固定存在且是唯一的系统管理员，接口禁止创建/删除/修改它，
-  也不允许再创建或提升其他 `system_admin`；首次启动建号时随机生成密码并打印一次。
-  其密码与 OTP 通过**本机专用维护页**维护：在服务器本机访问
+  也不允许再创建或提升其他 `system_admin`；首次启动建号时使用不落盘、不打印的
+  随机密码（无人知晓），初始配置通过**本机专用维护页**完成：在服务器本机访问
   `http://localhost:5000/local/system`（非本机访问返回 404，表单带签名令牌防跨站提交；
   密码可自定义、至少 8 位，留空则随机生成，均仅显示一次；OTP 与学生主动重置一致，
-  扫码后输入验证码确认才生效）。无头服务器可选 manage.py 命令完成同样操作。
+  扫码后输入验证码确认才生效）。
 
 所有外发邮件均为带品牌排版的 HTML 邮件（含纯文本备选），OTP 二维码以内嵌图片呈现。
 
@@ -150,14 +157,14 @@ Web 管理后台不提供邮箱配置入口。
 
 ## 文档
 
-`docs/` 目录（内容为重构前版本编写，细节以当前代码为准）：
+`docs/` 目录：
 
-- **使用指南.md** - 详细使用步骤和常见问题
-- **系统功能说明.md** - 完整功能说明和API文档
-- **问卷系统完整功能说明.md** - 问卷功能详细说明
-- **自定义问卷功能使用指南.md** - 自定义问卷功能说明
+- **使用指南.md** - 部署、初始配置、邮箱与批量操作、常见问题
+- **系统功能说明.md** - 完整功能说明、权限模型、数据模型和API文档
+- **问卷系统完整功能说明.md** - 问卷功能详细说明（含候补与签到）
+- **自定义问卷功能使用指南.md** - 自定义问卷操作指南
 
 ---
 
 **版本：** v3.0（工程化重构）
-**最后更新：** 2026-10-17
+**最后更新：** 2026-10-19

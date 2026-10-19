@@ -43,7 +43,7 @@ FORM_TOKEN_TTL_SECONDS = 600
 MIN_PASSWORD_LENGTH = 8
 _LOCAL_ADDRS = {"127.0.0.1", "::1", "localhost"}
 
-# 与前端（React 页面）同一套设计语言：#f5f6f8 底、白色圆角卡片、#0078d4 主色
+# 与前端（React 页面）同一套设计语言：#f5f6f8 底、白色圆角卡片、灰色角色主题
 _PAGE = """<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -52,74 +52,78 @@ _PAGE = """<!DOCTYPE html>
 <title>系统维护 · 团校积分系统</title>
 <style>
   * {{ box-sizing: border-box; }}
+  ::selection {{ background: rgba(96,96,96,.26); }}
   body {{ font-family: "Microsoft YaHei", "Segoe UI", system-ui, -apple-system, sans-serif;
          margin: 0; background: #f5f6f8; min-height: 100vh; color: #1f1f1f; }}
-  .topbar {{ background: #fff; border-bottom: 1px solid #ececec; padding: 0 24px;
-            height: 60px; display: flex; align-items: center; gap: 12px;
-            position: sticky; top: 0; z-index: 10; }}
-  .topbar .logo {{ width: 34px; height: 34px; border-radius: 9px; color: #fff; font-size: 18px;
-                  display: flex; align-items: center; justify-content: center;
-                  background: linear-gradient(135deg, #0078d4, #00bcf2);
-                  box-shadow: 0 4px 12px rgba(0,120,212,.3); }}
-  .topbar h1 {{ font-size: 16px; margin: 0; font-weight: 600; }}
-  .topbar .sub {{ font-size: 12px; color: #999; margin-left: 2px; }}
-  .topbar .badge {{ margin-left: auto; font-size: 12px; color: #0078d4; background: rgba(0,120,212,.08);
-                   border: 1px solid rgba(0,120,212,.25); border-radius: 999px; padding: 4px 12px; }}
-  .wrap {{ max-width: 720px; margin: 0 auto; padding: 28px 16px 56px; }}
+  .wrap {{ max-width: 896px; margin: 0 auto; padding: 24px 16px 56px; }}
+  .page-header {{ display: flex; align-items: center; justify-content: space-between;
+                 flex-wrap: wrap; gap: 12px; margin-bottom: 24px; }}
+  .page-header h1 {{ font-size: 24px; font-weight: 700; margin: 0; color: #424242; }}
+  .badge {{ font-size: 12px; color: #616161; background: rgba(97,97,97,.08);
+           border: 1px solid rgba(97,97,97,.25); border-radius: 999px; padding: 4px 12px; }}
   .notice {{ background: #fff; border: 1px solid rgba(209,52,56,.25); border-left: 4px solid #d13438;
             border-radius: 12px; padding: 14px 18px; font-size: 13px; color: #6b3a3c;
-            line-height: 1.8; margin-bottom: 24px; box-shadow: 0 2px 8px rgba(0,0,0,.05); }}
-  .card {{ background: #fff; border-radius: 12px; padding: 24px 28px; margin-bottom: 20px;
-          box-shadow: 0 2px 8px rgba(0,0,0,.05); }}
-  .card-head {{ display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }}
-  .card-head .icon {{ width: 36px; height: 36px; border-radius: 9px; font-size: 17px;
-                     display: flex; align-items: center; justify-content: center; color: #fff; }}
-  .icon.red {{ background: linear-gradient(135deg, #d13438, #ff6b6b); }}
-  .icon.blue {{ background: linear-gradient(135deg, #0078d4, #00bcf2); }}
-  .icon.green {{ background: linear-gradient(135deg, #107c10, #4cc26b); }}
-  .card-head h2 {{ font-size: 16px; margin: 0; font-weight: 600; }}
-  .card-head .tag {{ font-size: 12px; color: #999; margin-top: 2px; }}
+            line-height: 1.8; margin-bottom: 24px; box-shadow: 0 2px 8px rgba(0,0,0,.08); }}
+  /* 页签：与学生/管理员页面同一组件样式（灰底胶囊、选中白色卡片） */
+  .tabs > input {{ position: absolute; opacity: 0; pointer-events: none; }}
+  .tabs-list {{ display: inline-flex; flex-wrap: wrap; gap: 4px; background: #ececec;
+               border-radius: 10px; padding: 4px; margin-bottom: 16px; }}
+  .tabs-list label {{ padding: 8px 16px; font-size: 14px; font-weight: 500; color: #555;
+                     border-radius: 6px; cursor: pointer; transition: all .15s; }}
+  #ctab-account:checked ~ .tabs-list label[for=ctab-account],
+  #ctab-email:checked ~ .tabs-list label[for=ctab-email] {{
+      background: #fff; color: #424242; box-shadow: 0 1px 2px rgba(0,0,0,.1); }}
+  .panel {{ display: none; }}
+  #ctab-account:checked ~ .panel-account {{ display: block; }}
+  #ctab-email:checked ~ .panel-email {{ display: block; }}
+  .card {{ background: #fff; border-radius: 12px; padding: 20px; margin-bottom: 16px;
+          box-shadow: 0 2px 8px rgba(0,0,0,.08); }}
+  .card h2 {{ font-size: 18px; font-weight: 600; margin: 0 0 4px; color: #525252; }}
+  .card .sub {{ font-size: 12px; color: #999; margin: 0 0 12px; }}
   .desc {{ color: #616161; font-size: 13px; line-height: 1.8; margin: 8px 0 14px; }}
   .divider {{ border: 0; border-top: 1px solid #f0f0f0; margin: 20px 0; }}
-  label {{ display: block; font-size: 13px; font-weight: 500; color: #333; margin: 14px 0 6px; }}
+  .field {{ margin-bottom: 16px; }}
+  label {{ display: block; font-size: 14px; font-weight: 500; color: #333; margin: 0 0 6px; }}
   label .req {{ color: #d13438; }}
   input[type=text], input[type=email], input[type=password] {{
-      width: 100%%; padding: 9px 12px; font-size: 14px; border: 1px solid #d1d1d1;
-      border-radius: 8px; outline: none; transition: border-color .15s, box-shadow .15s;
+      width: 100%; height: 40px; padding: 8px 12px; font-size: 14px; border: 1px solid #d1d1d1;
+      border-radius: 6px; outline: none; transition: border-color .15s, box-shadow .15s;
       background: #fff; color: #1f1f1f; }}
-  input:focus {{ border-color: #0078d4; box-shadow: 0 0 0 3px rgba(0,120,212,.15); }}
-  input[readonly] {{ background: #f5f6f8; font-family: Consolas, monospace; color: #444; }}
-  .btn {{ display: inline-block; border: 0; border-radius: 8px; padding: 10px 22px;
-         font-size: 14px; cursor: pointer; margin-top: 16px; color: #fff;
-         text-decoration: none; transition: filter .15s, box-shadow .15s;
-         box-shadow: 0 2px 6px rgba(0,0,0,.12); }}
-  .btn:hover {{ filter: brightness(1.07); }}
+  input:focus {{ border-color: #616161; box-shadow: 0 0 0 2px rgba(97,97,97,.25); }}
+  input[readonly] {{ background: #f5f5f5; font-family: Consolas, monospace; color: #444; }}
+  .btn {{ display: inline-flex; align-items: center; justify-content: center; border: 0;
+         border-radius: 6px; height: 36px; padding: 0 16px; font-size: 14px; font-weight: 500;
+         cursor: pointer; color: #fff; text-decoration: none; transition: background .15s;
+         box-shadow: 0 1px 2px rgba(0,0,0,.08); }}
   .btn.primary {{ background: #0078d4; }}
+  .btn.primary:hover {{ background: #106ebe; }}
   .btn.red {{ background: #d13438; }}
+  .btn.red:hover {{ background: #b52e31; }}
   .btn.green {{ background: #107c10; }}
+  .btn.green:hover {{ background: #0d6b0d; }}
   .btn.gray {{ background: #fff; color: #1f1f1f; border: 1px solid #d1d1d1; box-shadow: none; }}
+  .btn.gray:hover {{ background: #f5f5f5; }}
   .hint {{ color: #999; font-size: 12px; margin-top: 5px; }}
-  .result-icon {{ width: 56px; height: 56px; border-radius: 50%%; margin: 4px auto 14px;
+  .result-icon {{ width: 56px; height: 56px; border-radius: 50%; margin: 4px auto 14px;
                  display: flex; align-items: center; justify-content: center; font-size: 26px; color: #fff; }}
-  .result-icon.ok {{ background: linear-gradient(135deg, #107c10, #4cc26b); }}
-  .result-icon.bad {{ background: linear-gradient(135deg, #d13438, #ff6b6b); }}
-  .secret {{ display: block; background: #f5f6f8; border: 1px dashed #c8c8c8; border-radius: 10px;
+  .result-icon.ok {{ background: #107c10; }}
+  .result-icon.bad {{ background: #d13438; }}
+  .secret {{ display: block; background: #f5f5f5; border: 1px dashed #c8c8c8; border-radius: 6px;
             padding: 14px 16px; font-family: Consolas, monospace; font-size: 17px;
             text-align: center; word-break: break-all; margin: 12px 0; letter-spacing: 2px; }}
   .qr {{ text-align: center; margin: 16px 0; }}
   .qr img {{ border: 1px solid #e0e0e0; border-radius: 12px; padding: 10px; background: #fff;
-            box-shadow: 0 2px 8px rgba(0,0,0,.05); }}
-  pre.debug {{ background: #1e1e1e; color: #9cdcfe; font-size: 12px; border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,.08); }}
+  pre.debug {{ background: #1e1e1e; color: #9cdcfe; font-size: 12px; border-radius: 6px;
               padding: 12px 14px; overflow-x: auto; line-height: 1.6; }}
 </style>
 </head>
 <body>
-  <div class="topbar">
-    <span class="logo">🛠</span>
-    <h1>团校积分系统</h1><span class="sub">系统维护控制台</span>
-    <span class="badge">仅本机 localhost 可访问</span>
-  </div>
   <div class="wrap">
+    <div class="page-header">
+      <h1>系统维护控制台</h1>
+      <span class="badge">仅本机 localhost 可访问</span>
+    </div>
     <div class="notice">⚠️ 本页面集中维护三类敏感信息：<strong>system 密码、system 动态验证码（OTP）、
     邮件服务配置</strong>。它们不会出现在系统的任何其他页面或接口中。
     新密码与二维码只在结果页显示一次；OTP 需当场输入验证码确认后才会生效。</div>
@@ -184,7 +188,7 @@ def _result(title: str, body_html: str, success: bool = True) -> str:
       <div class="result-icon {icon_class}">{icon}</div>
       <h2 style="text-align:center;margin:0 0 14px;font-size:18px">{title}</h2>
       <div class="desc" style="margin-bottom:0">{body_html}</div>
-      <div style="text-align:center">
+      <div style="text-align:center;margin-top:16px">
         <a class="btn gray" href="/local/system">返回维护页面</a>
       </div>
     </div>
@@ -196,17 +200,17 @@ def _console_content() -> str:
 
     password_card = f"""
     <div class="card">
-      <div class="card-head">
-        <span class="icon red">🔑</span>
-        <div><h2>system 登录密码</h2><div class="tag">自定义新密码，或留空随机生成</div></div>
-      </div>
+      <h2>system 登录密码</h2>
+      <p class="sub">自定义新密码，或留空随机生成</p>
       <p class="desc">重置内置管理员 <code>system</code> 的登录密码，旧密码立即失效。
       新密码仅在提交后的结果页显示一次。</p>
       <form method="post" action="/local/system/reset-password">
         <input type="hidden" name="form_token" value="{token}">
-        <label for="new_password">新密码</label>
-        <input type="password" id="new_password" name="new_password"
-               placeholder="至少 {MIN_PASSWORD_LENGTH} 位；留空则随机生成强密码" autocomplete="new-password">
+        <div class="field">
+          <label for="new_password">新密码</label>
+          <input type="password" id="new_password" name="new_password"
+                 placeholder="至少 {MIN_PASSWORD_LENGTH} 位；留空则随机生成强密码" autocomplete="new-password">
+        </div>
         <button class="btn red" type="submit">重置密码</button>
       </form>
     </div>
@@ -214,10 +218,8 @@ def _console_content() -> str:
 
     otp_card = f"""
     <div class="card">
-      <div class="card-head">
-        <span class="icon blue">🛡️</span>
-        <div><h2>system 动态验证码（OTP）</h2><div class="tag">扫码并输入验证码确认后才生效</div></div>
-      </div>
+      <h2>system 动态验证码（OTP）</h2>
+      <p class="sub">扫码并输入验证码确认后才生效</p>
       <p class="desc">登录除密码外还需验证器中的 6 位动态验证码。点击后将生成候选二维码，
       用验证器应用（Microsoft / Google Authenticator 或微信验证器小程序）扫码并输入验证码确认，
       新 OTP 才会替换旧的；中途放弃则原有 OTP 保持不变。</p>
@@ -233,43 +235,62 @@ def _console_content() -> str:
     suffix = _esc(config.student_email_suffix) if config else ""
     password_block = (
         f"""
-        <label>当前已保存的密码/授权码（明文，仅此页面可见）</label>
-        <input type="text" value="{_esc(saved_password)}" readonly>
+        <div class="field">
+          <label>当前已保存的密码/授权码（明文，仅此页面可见）</label>
+          <input type="text" value="{_esc(saved_password)}" readonly>
+        </div>
         """
         if saved_password
         else '<p class="hint">尚未保存密码/授权码。</p>'
     )
     email_card = f"""
     <div class="card">
-      <div class="card-head">
-        <span class="icon green">✉️</span>
-        <div><h2>邮件服务配置</h2><div class="tag">注册验证码、OTP 二维码与重置邮件的发件通道</div></div>
-      </div>
+      <h2>邮件服务配置</h2>
+      <p class="sub">注册验证码、OTP 二维码与重置邮件的发件通道</p>
       <p class="desc">QQ / 163 邮箱需使用 SMTP 授权码（不是登录密码）；
       Outlook 个人邮箱已禁用 SMTP，建议使用 QQ 或 163 邮箱。</p>
       <form method="post" action="/local/system/email-config">
         <input type="hidden" name="form_token" value="{token}">
-        <label for="service_email">服务邮箱</label>
-        <input type="email" id="service_email" name="service_email" value="{service_email}">
+        <div class="field">
+          <label for="service_email">服务邮箱</label>
+          <input type="email" id="service_email" name="service_email" value="{service_email}">
+        </div>
         {password_block}
-        <label for="service_email_password">新密码/授权码</label>
-        <input type="password" id="service_email_password" name="service_email_password"
-               placeholder="留空保持不变">
-        <label for="student_email_suffix">学生邮箱后缀</label>
-        <input type="text" id="student_email_suffix" name="student_email_suffix"
-               value="{suffix}" placeholder="@example.edu.cn">
+        <div class="field">
+          <label for="service_email_password">新密码/授权码</label>
+          <input type="password" id="service_email_password" name="service_email_password"
+                 placeholder="留空保持不变">
+        </div>
+        <div class="field">
+          <label for="student_email_suffix">学生邮箱后缀</label>
+          <input type="text" id="student_email_suffix" name="student_email_suffix"
+                 value="{suffix}" placeholder="@example.edu.cn">
+        </div>
         <button class="btn green" type="submit">保存邮箱配置</button>
       </form>
       <hr class="divider">
       <form method="post" action="/local/system/test-email">
         <input type="hidden" name="form_token" value="{token}">
-        <label for="test_email">发送测试邮件到</label>
-        <input type="email" id="test_email" name="test_email" placeholder="接收测试邮件的地址">
+        <div class="field">
+          <label for="test_email">发送测试邮件到</label>
+          <input type="email" id="test_email" name="test_email" placeholder="接收测试邮件的地址">
+        </div>
         <button class="btn gray" type="submit">发送测试邮件</button>
       </form>
     </div>
     """
-    return password_card + otp_card + email_card
+    return (
+        '<div class="tabs">'
+        '<input type="radio" name="console-tab" id="ctab-account" checked>'
+        '<input type="radio" name="console-tab" id="ctab-email">'
+        '<div class="tabs-list">'
+        '<label for="ctab-account">账号安全（密码 / OTP）</label>'
+        '<label for="ctab-email">邮件服务</label>'
+        "</div>"
+        f'<div class="panel panel-account">{password_card}{otp_card}</div>'
+        f'<div class="panel panel-email">{email_card}</div>'
+        "</div>"
+    )
 
 
 @local_admin_bp.get("/local/system")
@@ -326,23 +347,23 @@ def reset_otp():
     fresh_token = _issue_form_token()
     content = f"""
     <div class="card" style="max-width:560px;margin:0 auto">
-      <div class="card-head">
-        <span class="icon blue">🛡️</span>
-        <div><h2>绑定新的 system OTP</h2><div class="tag">确认前原有 OTP 仍然有效</div></div>
-      </div>
+      <h2>绑定新的 system OTP</h2>
+      <p class="sub">确认前原有 OTP 仍然有效</p>
       <p class="desc">请用验证器应用扫描下方二维码，或手动输入密钥：</p>
       <div class="qr"><img src="{qr}" alt="OTP 二维码" width="220" height="220"></div>
       <span class="secret">{candidate}</span>
       <form method="post" action="/local/system/reset-otp/confirm">
         <input type="hidden" name="form_token" value="{fresh_token}">
         <input type="hidden" name="bind_ticket" value="{_esc(ticket)}">
-        <label for="otp_code">输入验证器中显示的 6 位验证码以确认生效 <span class="req">*</span></label>
-        <input type="text" id="otp_code" name="otp_code" inputmode="numeric" maxlength="6"
-               autocomplete="one-time-code" placeholder="6 位数字"
-               style="text-align:center;letter-spacing:8px;font-size:18px">
+        <div class="field">
+          <label for="otp_code">输入验证器中显示的 6 位验证码以确认生效 <span class="req">*</span></label>
+          <input type="text" id="otp_code" name="otp_code" inputmode="numeric" maxlength="6"
+                 autocomplete="one-time-code" placeholder="6 位数字"
+                 style="text-align:center;letter-spacing:8px;text-indent:8px;font-size:18px">
+        </div>
         <button class="btn primary" type="submit" style="width:100%">验证并生效</button>
       </form>
-      <div style="text-align:center">
+      <div style="text-align:center;margin-top:12px">
         <a class="btn gray" href="/local/system">放弃（保持原有 OTP）</a>
       </div>
     </div>

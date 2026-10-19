@@ -14,6 +14,252 @@ body {
   color: #1f1f1f;
 }
 
+/* ========== 角色主题：学生蓝 / 管理员红（本机维护台灰见其服务端页面） ========== */
+.theme-student {
+  --role-heading: #0078d4;
+  --role-selection: rgba(0, 120, 212, 0.28);
+}
+.theme-admin {
+  /* 管理员端整体红色：主按钮、链接、进度条、选中页签等随主色一起切换；
+     破坏性操作（danger）改用更深的绛红以便区分 */
+  --color-primary: #d13438;
+  --color-primary-dark: #b52e31;
+  --color-danger: #8f1d20;
+  --color-danger-dark: #75171a;
+  --role-heading: #d13438;
+  --role-selection: rgba(209, 52, 56, 0.25);
+}
+.theme-student ::selection,
+.theme-admin ::selection {
+  background: var(--role-selection);
+}
+.theme-student h2,
+.theme-student h3,
+.theme-admin h2,
+.theme-admin h3 {
+  color: var(--role-heading);
+}
+/* 用户内容（Markdown 渲染的反馈/问卷文字）标题保持正文颜色 */
+.theme-student .md-content h2,
+.theme-student .md-content h3,
+.theme-admin .md-content h2,
+.theme-admin .md-content h3 {
+  color: inherit;
+}
+
+/* ========== Markdown 内容 ========== */
+.md-content > p,
+.md-content > .math-display {
+  margin: 0;
+}
+.md-content p {
+  margin: 0 0 0.4em;
+}
+.md-content p:last-child {
+  margin-bottom: 0;
+}
+.md-content strong {
+  font-weight: 600;
+}
+.md-content em {
+  font-style: italic;
+}
+.md-content ul,
+.md-content ol {
+  margin: 0.2em 0 0.4em;
+  padding-left: 1.6em;
+}
+.md-content ul {
+  list-style: disc;
+}
+.md-content ol {
+  list-style: decimal;
+}
+.md-content li {
+  margin: 0.1em 0;
+}
+.md-content h1,
+.md-content h2,
+.md-content h3,
+.md-content h4 {
+  font-weight: 600;
+  margin: 0.5em 0 0.3em;
+}
+.md-content h1 {
+  font-size: 1.3em;
+}
+.md-content h2 {
+  font-size: 1.2em;
+}
+.md-content h3 {
+  font-size: 1.1em;
+}
+.md-content code {
+  background: #f0eee8;
+  border-radius: 3px;
+  padding: 0 4px;
+  font-size: 0.9em;
+}
+.md-content pre {
+  background: #f6f4ee;
+  border: 1px solid #e8e2d5;
+  border-radius: 6px;
+  padding: 8px 10px;
+  overflow-x: auto;
+  margin: 0.3em 0 0.5em;
+}
+.md-content pre code {
+  background: transparent;
+  padding: 0;
+}
+.md-content blockquote {
+  border-left: 3px solid #d8d0c0;
+  padding-left: 10px;
+  color: #666;
+  margin: 0.3em 0 0.5em;
+}
+.md-content table {
+  border-collapse: collapse;
+  margin: 0.3em 0 0.5em;
+}
+.md-content th,
+.md-content td {
+  border: 1px solid #d8d0c0;
+  padding: 3px 8px;
+}
+.md-content hr {
+  border: none;
+  border-top: 1px solid #d8d0c0;
+  margin: 0.6em 0;
+}
+.md-content a {
+  color: #0078d4;
+  text-decoration: underline;
+}
+.md-inline {
+  display: inline;
+}
+.md-inline .katex {
+  font-size: 1.05em;
+}
+/* 文档段落：Markdown 段落保持首行缩进 */
+.letter-paragraph > p {
+  text-indent: 2em;
+}
+
+/* ========== 问卷正文编辑器（CodeMirror） ========== */
+.body-editor .cm-editor {
+  background: transparent;
+  font-size: 15px;
+  font-family: inherit;
+}
+.body-editor .cm-editor.cm-focused {
+  outline: none;
+}
+.body-editor .cm-content {
+  padding: 4px 0;
+  line-height: 2;
+  caret-color: #0078d4;
+}
+.body-editor .cm-line {
+  padding: 0 2px;
+}
+.body-editor .cm-placeholder {
+  color: #bbb;
+  font-style: normal;
+}
+/* 正文里的信息/题目芯片 */
+.body-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin: 0 2px;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 1.7;
+  vertical-align: baseline;
+  user-select: none;
+}
+.body-chip-field {
+  background: #edf7ef;
+  color: #2e7d32;
+  border-bottom: 2px solid #a8d5b0;
+}
+.body-chip-question {
+  background: #f0f7ff;
+  color: #1565c0;
+  border-bottom: 2px solid #9ec9ef;
+  cursor: pointer;
+}
+.body-chip-question.body-chip-selected {
+  background: #e3f2fd;
+  color: #0078d4;
+  border-bottom-color: #0078d4;
+  outline: 1px solid rgba(0, 120, 212, 0.4);
+}
+.body-chip .body-chip-type {
+  font-size: 11px;
+  opacity: 0.65;
+}
+.body-chip .body-chip-close {
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin-left: 1px;
+  cursor: pointer;
+  color: inherit;
+  opacity: 0.45;
+  font-size: 13px;
+  line-height: 1;
+}
+.body-chip .body-chip-close:hover {
+  opacity: 1;
+  color: #d13438;
+}
+/* 编辑器内 Markdown 实时渲染 */
+.body-editor .cm-md-h1,
+.body-editor .cm-md-h2,
+.body-editor .cm-md-h3,
+.body-editor .cm-md-h4,
+.body-editor .cm-md-h5,
+.body-editor .cm-md-h6 {
+  font-weight: 600;
+  line-height: 1.6;
+}
+.body-editor .cm-md-h1 {
+  font-size: 1.3em;
+}
+.body-editor .cm-md-h2 {
+  font-size: 1.2em;
+}
+.body-editor .cm-md-h3 {
+  font-size: 1.1em;
+}
+.body-editor .cm-md-strong {
+  font-weight: 600;
+}
+.body-editor .cm-md-em {
+  font-style: italic;
+}
+.body-editor .cm-md-strike {
+  text-decoration: line-through;
+}
+.body-editor .cm-md-code {
+  background: #f0eee8;
+  border-radius: 3px;
+  padding: 0 4px;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 0.9em;
+}
+.body-editor .cm-math-display {
+  display: block;
+  padding: 6px 0;
+  text-align: center;
+}
+
+
+
 /* 打印支持：打印时只显示 .print-area 内容 */
 @media print {
   @page {

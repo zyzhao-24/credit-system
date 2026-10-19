@@ -82,3 +82,24 @@ class EmailVerification(db.Model):
     expires_at = db.Column(db.DateTime, nullable=False)
     attempts = db.Column(db.Integer, nullable=False, default=0)
     created_at = db.Column(db.DateTime, nullable=False)
+
+
+class TrustedDevice(db.Model):
+    """OTP 信任记录：账号在某 IP / 某设备浏览器成功验证 OTP 后，一周内免 OTP。
+
+    每次 OTP 验证成功写入一行：token_hash 是发给浏览器的设备 Cookie 的哈希，
+    ip 是当时的来源 IP；登录第一步满足任一匹配（同设备或同 IP）且未过期即跳过 OTP。
+    """
+
+    __tablename__ = "trusted_devices"
+    __table_args__ = (
+        db.Index("ix_trusted_devices_account", "user_type", "account_id"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_type = db.Column(db.String(10), nullable=False)  # student / admin
+    account_id = db.Column(db.String(100), nullable=False)
+    token_hash = db.Column(db.String(64), nullable=False, index=True)
+    ip = db.Column(db.String(45), nullable=False, default="")
+    created_at = db.Column(db.DateTime, nullable=False)
+    expires_at = db.Column(db.DateTime, nullable=False, index=True)

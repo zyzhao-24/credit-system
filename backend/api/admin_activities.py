@@ -21,6 +21,7 @@ from backend.models import (
 )
 from backend.services.legacy_import import DATETIME_FORMAT
 from backend.services.permissions import check_activity_edit_permission
+from backend.services.ranking import response_payload
 
 
 admin_activities_bp = Blueprint("admin_activities", __name__)
@@ -73,6 +74,16 @@ def _validate_categories(names: list[str]) -> bool:
     return bool(names) and all(db.session.get(Category, name) is not None for name in names)
 
 
+def _entry_categories_error(record: Record, names: list[str]) -> str | None:
+    """条目类别必须存在且属于记录的可行类别；返回错误消息或 None。"""
+    if not _validate_categories(names):
+        return "类别不存在或未选择"
+    invalid = [name for name in names if name not in record.categories]
+    if invalid:
+        return f"条目类别必须属于记录类别（{'、'.join(invalid)} 不在该记录的类别中）"
+    return None
+
+
 def _record_or_error(record_id: str):
     record = db.session.get(Record, record_id)
     if record is None:
@@ -97,16 +108,11 @@ def manage_activities():
     data = request.get_json(silent=True) or {}
     if request.method == "POST":
         name = data.get("name", "").strip()
-        categories = data.get("categories", [])
         department = data.get("department", "")
         if not name:
             return _error("活动名称不能为空")
         if Activity.query.filter_by(name=name).first():
             return _error("活动名称已存在")
-        if not categories:
-            return _error("请至少选择一个类别")
-        if not _validate_categories(categories):
-            return _error("类别不存在")
 
         activity_id = str(uuid.uuid4())
         position = db.session.query(func.max(Activity.position)).scalar() or 0
@@ -117,7 +123,6 @@ def manage_activities():
             created_by=identity.get("sub"),
             position=position + 1,
         )
-        activity.categories = categories
         activity.allowed_editors = [identity.get("sub")]
         db.session.add(activity)
         db.session.commit()
@@ -129,17 +134,6 @@ def manage_activities():
         if activity is None:
             return _error("活动不存在")
         is_system_admin = identity.get("role") == "system_admin"
-        has_edit_permission = check_activity_edit_permission(identity, activity_id)
-
-        if "categories" in data:
-            if not has_edit_permission:
-                return _error("无权限修改此活动", 403)
-            categories = data["categories"]
-            if not categories:
-                return _error("请至少选择一个类别")
-            if not _validate_categories(categories):
-                return _error("类别不存在")
-            activity.categories = categories
 
         if "department" in data or "allowed_editors" in data:
             if not is_system_admin:
@@ -170,14 +164,20 @@ def manage_records():
 
     if request.method == "POST":
         activity_id = data.get("activity_id", "")
-        record_name = data.get("record_name", "")
+        record_name = data.get("record_name", "").strip()
+        categories = data.get("categories", [])
         activity = db.session.get(Activity, activity_id)
         if activity is None:
             return _error("活动不存在")
         if not check_activity_edit_permission(g.current_identity, activity_id):
             return _error("无权限编辑此活动", 403)
+        if not record_name:
+            return _error("记录名称不能为空")
+        if not _validate_categories(categories):
+            return _error("请至少选择一个有效类别")
         record_id = str(uuid.uuid4())
         record = Record(record_id=record_id, record_name=record_name, position=len(activity.records))
+        record.categories = categories
         activity.records.append(record)
         db.session.commit()
         return jsonify({"success": True, "record_id": record_id})
@@ -186,10 +186,26 @@ def manage_records():
         record, error = _record_or_error(data.get("record_id", ""))
         if error:
             return error
-        new_name = data.get("record_name", "")
-        if not new_name or not new_name.strip():
-            return _error("记录名称不能为空")
-        record.record_name = new_name.strip()
+        if "record_name" in data:
+            new_name = data.get("record_name", "")
+            if not new_name or not new_name.strip():
+                return _error("记录名称不能为空")
+            record.record_name = new_name.strip()
+        if "categories" in data:
+            categories = data["categories"]
+            if not _validate_categories(categories):
+                return _error("请至少选择一个有效类别")
+            # 缩减类别时，仍在使用被移除类别的条目会失效，拒绝并要求先调整条目
+            removed = set(record.categories) - set(categories)
+            if removed:
+                blocking = sorted(
+                    {name for entry in record.entries for name in entry.categories if name in removed}
+                )
+                if blocking:
+                    return _error(
+                        f"仍有条目使用类别：{'、'.join(blocking)}，请先调整这些条目后再缩减记录类别"
+                    )
+            record.categories = categories
         db.session.commit()
         return jsonify({"success": True})
 
@@ -214,8 +230,9 @@ def manage_entries():
         if student_id and not student_id.isdigit():
             return _error("学号只能包含数字")
         categories = data.get("categories", [])
-        if not _validate_categories(categories):
-            return _error("类别不存在")
+        category_error = _entry_categories_error(record, categories)
+        if category_error:
+            return _error(category_error)
         entry = Entry(
             student_id=student_id,
             credits=float(data.get("credits", 0)),
@@ -240,8 +257,9 @@ def manage_entries():
         if "credits" in data:
             entry.credits = float(data["credits"])
         if "categories" in data:
-            if not _validate_categories(data["categories"]):
-                return _error("类别不存在")
+            category_error = _entry_categories_error(record, data["categories"])
+            if category_error:
+                return _error(category_error)
             entry.categories = data["categories"]
         db.session.commit()
         return jsonify({"success": True})
@@ -269,7 +287,12 @@ def get_activity_records(activity_id: str):
     if activity is None:
         return _error("活动不存在")
     records = [
-        {"record_id": record.record_id, "record_name": record.record_name, "entries_count": len(record.entries)}
+        {
+            "record_id": record.record_id,
+            "record_name": record.record_name,
+            "entries_count": len(record.entries),
+            "categories": record.categories,
+        }
         for record in activity.records
     ]
     return jsonify({"success": True, "records": records})
@@ -303,11 +326,60 @@ def get_record_detail(record_id: str):
                 "record_name": record.record_name,
                 "activity_id": record.activity_id,
                 "activity_name": activity.name if activity else "未知",
+                "categories": record.categories,
                 "activity_categories": activity.categories if activity else [],
                 "entries": entries,
             },
         }
     )
+
+
+@admin_activities_bp.get("/api/admin/records/<record_id>/checked_in_missing")
+@require_admin
+def checked_in_missing(record_id: str):
+    """该记录下"已签到（有效）但还没有条目"的学生，供录入学分时对照/快速添加。
+
+    签到有效性规则与问卷一致：名额内签到即有效；候补签到须管理员确认或转正。
+    """
+    record = db.session.get(Record, record_id)
+    if record is None:
+        return _error("记录不存在")
+    if not check_activity_edit_permission(g.current_identity, record.activity_id):
+        return _error("无权限", 403)
+    template = (
+        ActivityQuestionnaire.query.filter_by(activity_id=record.activity_id, status="active")
+        .order_by(ActivityQuestionnaire.created_time.desc())
+        .first()
+    )
+    students = []
+    if template is not None:
+        entered = {entry.student_id for entry in record.entries}
+        responses = (
+            QuestionnaireResponse.query.filter_by(
+                questionnaire_id=template.questionnaire_id, status="active"
+            )
+            .order_by(QuestionnaireResponse.checked_in_at.asc())
+            .all()
+        )
+        for response in responses:
+            if (
+                not response.checked_in_at
+                or response.absent
+                or response.student_id in entered
+            ):
+                continue
+            payload = response_payload(response, template)
+            if payload["checkin_state"] != "valid":
+                continue
+            students.append(
+                {
+                    "student_id": response.student_id,
+                    "student_name": response.student_name,
+                    "intended_category": response.intended_category,
+                    "checked_in_at": payload["checked_in_at"],
+                }
+            )
+    return jsonify({"success": True, "students": students})
 
 
 @admin_activities_bp.post("/api/admin/entries/batch")
@@ -318,8 +390,9 @@ def batch_entries():
     if error:
         return error
     categories = data.get("categories", [])
-    if not _validate_categories(categories):
-        return _error("类别不存在")
+    category_error = _entry_categories_error(record, categories)
+    if category_error:
+        return _error(category_error)
     default_credits = data.get("default_credits", 0)
 
     added = updated = ignored = 0
@@ -383,8 +456,9 @@ def batch_update_entries():
             if data.get("credits") is not None:
                 entry.credits = float(data["credits"])
             if data.get("categories") is not None:
-                if not _validate_categories(data["categories"]):
-                    return _error("类别不存在")
+                category_error = _entry_categories_error(record, data["categories"])
+                if category_error:
+                    return _error(category_error)
                 entry.categories = data["categories"]
             updated += 1
     db.session.commit()

@@ -92,7 +92,7 @@ def login(app, database):
         client = app.test_client()
 
         # Admins without OTP are rejected at step 1, so pre-bind them directly
-        # in the database (equivalent to manage.py set-otp, no email involved).
+        # in the database (equivalent to the OTP-bind API, no email involved).
         if user_type == "admin":
             with app.app_context():
                 admin = _db.session.get(Admin, username)
@@ -112,7 +112,10 @@ def login(app, database):
         )
         assert step1.status_code == 200, step1.get_json()
         payload = step1.get_json()
-        assert payload.get("otp_required") is True
+        # 账号处于 OTP 信任期（一周内验证过）时第一步直接发令牌
+        if not payload.get("otp_required"):
+            assert payload.get("access_token"), payload
+            return f"Bearer {payload['access_token']}"
 
         with app.app_context():
             model = Student if user_type == "student" else Admin

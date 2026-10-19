@@ -1,0 +1,29 @@
+[project]
+name = "credit-system"
+version = "1.0.0"
+description = "团校积分系统：Flask + SQLite 后端，React 前端"
+requires-python = ">=3.12"
+dependencies = [
+    "Flask==3.0.0",
+    "Flask-CORS==4.0.0",
+    "Flask-SQLAlchemy==3.1.1",
+    "Flask-Migrate==4.1.0",
+    "SQLAlchemy==2.1.4",
+    "openpyxl==3.1.2",
+    "cryptography==41.0.7",
+    "PyJWT==2.15.1",
+    "python-dotenv==1.2.4",
+    "waitress==3.0.2",
+    "pyotp==2.10.0",
+    "qrcode[pil]==8.2",
+    "cheroot>=11.1.2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest==9.1.1",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

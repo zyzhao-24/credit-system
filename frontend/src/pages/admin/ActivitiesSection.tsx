@@ -15,11 +15,12 @@ import {
   getAdminActivities,
   getAdminCategories,
   getAdmins,
+  getCheckedInMissing,
   getDepartments,
   getRecordDetail,
-  renameRecord,
   updateActivity,
   updateEntry,
+  updateRecord,
 } from "@/api/service";
 import type {
   AdminActivity,
@@ -27,6 +28,7 @@ import type {
   AdminEntry,
   AdminRecord,
   AdminRecordDetail,
+  CheckedInMissingStudent,
 } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -45,12 +47,14 @@ import { CheckboxGroup } from "@/components/CheckboxGroup";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { EmptyState, Field } from "@/components/common";
 
-/** 活动管理标签页：活动、记录、条目的三级管理。 */
+/** 活动管理标签页：紧凑可搜索的活动卡片 ⇄ 选中活动的记录列表，两级视图互相切换。 */
 export function ActivitiesSection({ isSystemAdmin }: { isSystemAdmin: boolean }) {
   const [activities, setActivities] = useState<AdminActivity[]>([]);
   const [categories, setCategories] = useState<AdminCategory[]>([]);
   const [departments, setDepartments] = useState<string[]>([]);
   const [addOpen, setAddOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const load = useCallback(() => {
     getAdminActivities()
@@ -72,10 +76,41 @@ export function ActivitiesSection({ isSystemAdmin }: { isSystemAdmin: boolean })
 
   useEffect(load, [load]);
 
+  const keyword = search.trim().toLowerCase();
+  const filtered = keyword
+    ? activities.filter((activity) =>
+        [activity.name, activity.department, ...activity.categories]
+          .join(" ")
+          .toLowerCase()
+          .includes(keyword),
+      )
+    : activities;
+  const selected = activities.find((a) => a.activity_id === selectedId) ?? null;
+
+  // 记录列表视图（点击卡片进入，返回按钮切回卡片视图）
+  if (selected) {
+    return (
+      <ActivityRecordsView
+        activity={selected}
+        categories={categories}
+        departments={departments}
+        isSystemAdmin={isSystemAdmin}
+        onBack={() => setSelectedId(null)}
+        onChanged={load}
+      />
+    );
+  }
+
   return (
     <section>
-      <div className="flex items-center justify-between mb-3">
-        <h2 className="text-xl font-semibold">活动列表</h2>
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <h2 className="text-xl font-semibold mr-auto">活动列表</h2>
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="搜索活动名称 / 类别 / 部门"
+          className="w-64"
+        />
         <Button size="sm" onClick={() => setAddOpen(true)}>
           ➕ 创建活动
         </Button>
@@ -83,23 +118,23 @@ export function ActivitiesSection({ isSystemAdmin }: { isSystemAdmin: boolean })
 
       {activities.length === 0 ? (
         <EmptyState icon="🗂️" text="暂无活动" />
+      ) : filtered.length === 0 ? (
+        <EmptyState icon="🔍" text="没有匹配的活动" />
       ) : (
-        activities.map((activity) => (
-          <ActivityCard
-            key={activity.activity_id}
-            activity={activity}
-            categories={categories}
-            departments={departments}
-            isSystemAdmin={isSystemAdmin}
-            onChanged={load}
-          />
-        ))
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {filtered.map((activity) => (
+            <ActivityCard
+              key={activity.activity_id}
+              activity={activity}
+              onOpen={() => setSelectedId(activity.activity_id)}
+            />
+          ))}
+        </div>
       )}
 
       <AddActivityDialog
         open={addOpen}
         onOpenChange={setAddOpen}
-        categories={categories}
         departments={departments}
         onDone={load}
       />
@@ -107,22 +142,61 @@ export function ActivitiesSection({ isSystemAdmin }: { isSystemAdmin: boolean })
   );
 }
 
+/** 紧凑活动卡片：只展示摘要，点击进入记录列表视图。 */
+function ActivityCard({ activity, onOpen }: { activity: AdminActivity; onOpen: () => void }) {
+  return (
+    <Card
+      role="button"
+      tabIndex={0}
+      onClick={onOpen}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+      className="cursor-pointer p-3 transition hover:border-primary/50 hover:shadow-[0_4px_16px_rgba(0,120,212,0.15)] border border-transparent"
+    >
+      <div className="flex items-start justify-between gap-2">
+        <h3 className="text-[15px] font-semibold leading-snug">{activity.name}</h3>
+        {activity.can_edit ? null : (
+          <span className="shrink-0 rounded bg-black/5 px-1.5 py-0.5 text-xs text-[#999]">只读</span>
+        )}
+      </div>
+      {activity.categories.length > 0 ? (
+        <div className="mt-1.5 flex flex-wrap gap-1">
+          {activity.categories.map((category) => (
+            <span key={category} className="rounded bg-primary/10 px-1.5 py-0.5 text-xs text-primary">
+              {category}
+            </span>
+          ))}
+        </div>
+      ) : null}
+      <p className="mt-2 text-xs text-[#777]">
+        {activity.department || "未指定部门"} · 记录 {activity.records_count} 条
+        {activity.has_questionnaire
+          ? ` · 报名 ${activity.current_participants ?? 0}${
+              activity.max_participants > 0 ? `/${activity.max_participants}` : ""
+            } 人`
+          : ""}
+      </p>
+    </Card>
+  );
+}
+
 function AddActivityDialog({
   open,
   onOpenChange,
-  categories,
   departments,
   onDone,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  categories: AdminCategory[];
   departments: string[];
   onDone: () => void;
 }) {
   const [name, setName] = useState("");
   const [selectedDepartments, setSelectedDepartments] = useState<string[]>([]);
-  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
 
   const submit = async () => {
     if (!name.trim()) {
@@ -132,15 +206,13 @@ function AddActivityDialog({
     try {
       const result = await createActivity({
         name: name.trim(),
-        categories: selectedCategories,
         department: selectedDepartments.join(", "),
       });
       if (result.success) {
-        toast.success("创建成功");
+        toast.success("创建成功，请在记录列表中为记录设置学分类别");
         onOpenChange(false);
         setName("");
         setSelectedDepartments([]);
-        setSelectedCategories([]);
         onDone();
       } else {
         toast.error(result.message || "创建失败");
@@ -164,14 +236,9 @@ function AddActivityDialog({
             idPrefix="add-act-dept"
           />
         </Field>
-        <Field label="活动类别（可多选）" required>
-          <CheckboxGroup
-            options={categories.map((c) => c.name)}
-            selected={selectedCategories}
-            onChange={setSelectedCategories}
-            idPrefix="add-act-cat"
-          />
-        </Field>
+        <p className="text-xs text-[#888] leading-relaxed">
+          学分类别在记录一级设置；活动类别由所属记录的类别自动汇总。
+        </p>
         <div className="flex gap-3 mt-2">
           <Button className="flex-1" onClick={submit}>
             创建
@@ -185,25 +252,28 @@ function AddActivityDialog({
   );
 }
 
-function ActivityCard({
+/** 记录列表视图：单个活动的记录管理，所有活动级操作按钮集中在这里。 */
+function ActivityRecordsView({
   activity,
   categories,
   departments,
   isSystemAdmin,
+  onBack,
   onChanged,
 }: {
   activity: AdminActivity;
   categories: AdminCategory[];
   departments: string[];
   isSystemAdmin: boolean;
+  onBack: () => void;
   onChanged: () => void;
 }) {
   const [records, setRecords] = useState<AdminRecord[] | null>(null);
+  const [recordSearch, setRecordSearch] = useState("");
   const [addRecordOpen, setAddRecordOpen] = useState(false);
   const [permissionOpen, setPermissionOpen] = useState(false);
-  const [editCategoriesOpen, setEditCategoriesOpen] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
-  const [renameTarget, setRenameTarget] = useState<AdminRecord | null>(null);
+  const [editTarget, setEditTarget] = useState<AdminRecord | null>(null);
   const [deleteRecordTarget, setDeleteRecordTarget] = useState<AdminRecord | null>(null);
   const [detailRecordId, setDetailRecordId] = useState<string | null>(null);
 
@@ -217,123 +287,150 @@ function ActivityCard({
 
   useEffect(loadRecords, [loadRecords]);
 
-  return (
-    <Card className="mb-5">
-      <h3 className="text-lg font-semibold mb-1">{activity.name}</h3>
-      <p className="text-sm text-[#555]">
-        <strong>类别：</strong>
-        {activity.categories.join(", ") || "-"}
-      </p>
-      {activity.department ? (
-        <p className="text-sm text-[#555]">
-          <strong>负责部门：</strong>
-          {activity.department}
-        </p>
-      ) : null}
-      {activity.has_questionnaire ? (
-        <p className="text-sm text-[#555]">
-          <strong>问卷报名：</strong>
-          {activity.current_participants ?? 0}
-          {activity.max_participants > 0 ? `/${activity.max_participants}` : ""} 人
-        </p>
-      ) : null}
+  const keyword = recordSearch.trim().toLowerCase();
+  const filteredRecords =
+    records && keyword
+      ? records.filter((record) => record.record_name.toLowerCase().includes(keyword))
+      : records;
 
-      <div className="mt-3 flex flex-wrap gap-2">
-        {activity.can_edit ? (
-          <>
-            <Button size="sm" onClick={() => setAddRecordOpen(true)}>
-              添加记录
+  return (
+    <section>
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <Button size="sm" variant="secondary" onClick={onBack}>
+          ← 返回活动列表
+        </Button>
+        <h2 className="text-xl font-semibold">{activity.name}</h2>
+        <div className="ml-auto flex flex-wrap gap-2">
+          {activity.can_edit ? (
+            <>
+              <Button size="sm" onClick={() => setAddRecordOpen(true)}>
+                添加记录
+              </Button>
+              <Button size="sm" variant="danger" onClick={() => setDeleteConfirm(true)}>
+                删除活动
+              </Button>
+            </>
+          ) : (
+            <span className="self-center text-sm text-[#999]">无编辑权限</span>
+          )}
+          {isSystemAdmin ? (
+            <Button size="sm" variant="secondary" onClick={() => setPermissionOpen(true)}>
+              权限管理
             </Button>
-            <Button size="sm" variant="secondary" onClick={() => setEditCategoriesOpen(true)}>
-              修改类别
-            </Button>
-            <Button size="sm" variant="danger" onClick={() => setDeleteConfirm(true)}>
-              删除活动
-            </Button>
-          </>
-        ) : (
-          <p className="text-sm text-[#999]">无编辑权限</p>
-        )}
-        {isSystemAdmin ? (
-          <Button size="sm" variant="secondary" onClick={() => setPermissionOpen(true)}>
-            权限管理
-          </Button>
-        ) : null}
+          ) : null}
+        </div>
       </div>
 
-      <div className="mt-4">
-        <h4 className="font-medium mb-2">记录列表</h4>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>记录名称</TableHead>
-              <TableHead>条目数</TableHead>
-              <TableHead>操作</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {records && records.length > 0 ? (
-              records.map((record) => (
-                <TableRow key={record.record_id}>
-                  <TableCell>{record.record_name}</TableCell>
-                  <TableCell>{record.entries_count}</TableCell>
-                  <TableCell>
-                    <div className="flex flex-wrap gap-2">
-                      <Button size="sm" variant="secondary" onClick={() => setDetailRecordId(record.record_id)}>
-                        查看详情
-                      </Button>
-                      {activity.can_edit ? (
-                        <>
-                          <Button size="sm" variant="secondary" onClick={() => setRenameTarget(record)}>
-                            修改名称
-                          </Button>
-                          <Button size="sm" variant="danger" onClick={() => setDeleteRecordTarget(record)}>
-                            删除
-                          </Button>
-                        </>
-                      ) : null}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))
-            ) : (
-              <TableRow>
-                <TableCell colSpan={3} className="text-center text-[#666]">
-                  暂无记录
+      <Card className="mb-3 flex flex-wrap gap-x-5 gap-y-1 p-3 text-sm text-[#555]">
+        <span>
+          <strong>活动类别（记录类别并集）：</strong>
+          {activity.categories.join(", ") || "-"}
+        </span>
+        {activity.department ? (
+          <span>
+            <strong>负责部门：</strong>
+            {activity.department}
+          </span>
+        ) : null}
+        {activity.has_questionnaire ? (
+          <span>
+            <strong>问卷报名：</strong>
+            {activity.current_participants ?? 0}
+            {activity.max_participants > 0 ? `/${activity.max_participants}` : ""} 人
+          </span>
+        ) : null}
+      </Card>
+
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <h4 className="font-medium">记录列表</h4>
+        <Input
+          value={recordSearch}
+          onChange={(e) => setRecordSearch(e.target.value)}
+          placeholder="搜索记录名称"
+          className="w-56"
+        />
+      </div>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>记录名称</TableHead>
+            <TableHead>学分类别</TableHead>
+            <TableHead>条目数</TableHead>
+            <TableHead>操作</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {filteredRecords && filteredRecords.length > 0 ? (
+            filteredRecords.map((record) => (
+              <TableRow key={record.record_id}>
+                <TableCell>{record.record_name}</TableCell>
+                <TableCell>
+                  <div className="flex flex-wrap gap-1">
+                    {record.categories.map((category) => (
+                      <span
+                        key={category}
+                        className="rounded bg-primary/10 px-1.5 py-0.5 text-xs text-primary"
+                      >
+                        {category}
+                      </span>
+                    ))}
+                  </div>
+                </TableCell>
+                <TableCell>{record.entries_count}</TableCell>
+                <TableCell>
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="secondary" onClick={() => setDetailRecordId(record.record_id)}>
+                      查看详情
+                    </Button>
+                    {activity.can_edit ? (
+                      <>
+                        <Button size="sm" variant="secondary" onClick={() => setEditTarget(record)}>
+                          编辑
+                        </Button>
+                        <Button size="sm" variant="danger" onClick={() => setDeleteRecordTarget(record)}>
+                          删除
+                        </Button>
+                      </>
+                    ) : null}
+                  </div>
                 </TableCell>
               </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </div>
+            ))
+          ) : (
+            <TableRow>
+              <TableCell colSpan={4} className="text-center text-[#666]">
+                {records && records.length > 0 ? "没有匹配的记录" : "暂无记录"}
+              </TableCell>
+            </TableRow>
+          )}
+        </TableBody>
+      </Table>
 
       <AddRecordDialog
         open={addRecordOpen}
         onOpenChange={setAddRecordOpen}
         activityId={activity.activity_id}
+        categories={categories}
         onDone={(recordId) => {
           loadRecords();
           onChanged();
           setDetailRecordId(recordId);
         }}
       />
-      <RenameRecordDialog
-        target={renameTarget}
-        onOpenChange={(open) => !open && setRenameTarget(null)}
-        onDone={loadRecords}
+      <EditRecordDialog
+        target={editTarget}
+        onOpenChange={(open) => !open && setEditTarget(null)}
+        categories={categories}
+        onDone={() => {
+          loadRecords();
+          onChanged();
+        }}
       />
       <PermissionDialog
         open={permissionOpen}
         onOpenChange={setPermissionOpen}
         activity={activity}
         departments={departments}
-        onDone={onChanged}
-      />
-      <EditCategoriesDialog
-        open={editCategoriesOpen}
-        onOpenChange={setEditCategoriesOpen}
-        activity={activity}
-        categories={categories}
         onDone={onChanged}
       />
       <ConfirmDialog
@@ -343,8 +440,10 @@ function ActivityCard({
         onConfirm={async () => {
           try {
             const result = await deleteActivity(activity.activity_id);
-            if (result.success) onChanged();
-            else toast.error(result.message || "删除失败");
+            if (result.success) {
+              onChanged();
+              onBack();
+            } else toast.error(result.message || "删除失败");
           } catch (error) {
             toast.error(errorMessage(error, "删除失败"));
           }
@@ -372,7 +471,6 @@ function ActivityCard({
       {detailRecordId ? (
         <RecordDetailDialog
           recordId={detailRecordId}
-          allCategories={categories}
           canEdit={activity.can_edit}
           onClose={() => {
             setDetailRecordId(null);
@@ -380,7 +478,7 @@ function ActivityCard({
           }}
         />
       ) : null}
-    </Card>
+    </section>
   );
 }
 
@@ -388,21 +486,37 @@ function AddRecordDialog({
   open,
   onOpenChange,
   activityId,
+  categories,
   onDone,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   activityId: string;
+  categories: AdminCategory[];
   onDone: (recordId: string) => void;
 }) {
   const [name, setName] = useState("");
+  const [selected, setSelected] = useState<string[]>([]);
 
   const submit = async () => {
+    if (!name.trim()) {
+      toast.error("记录名称不能为空");
+      return;
+    }
+    if (selected.length === 0) {
+      toast.error("请至少选择一个类别");
+      return;
+    }
     try {
-      const result = await createRecord({ activity_id: activityId, record_name: name.trim() });
+      const result = await createRecord({
+        activity_id: activityId,
+        record_name: name.trim(),
+        categories: selected,
+      });
       if (result.success && result.record_id) {
         onOpenChange(false);
         setName("");
+        setSelected([]);
         onDone(result.record_id);
       } else {
         toast.error(result.message || "添加失败");
@@ -418,6 +532,14 @@ function AddRecordDialog({
         <Field label="记录名称" required>
           <Input value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
+        <Field label="学分类别（可多选，记录内条目的可选范围）" required>
+          <CheckboxGroup
+            options={categories.map((c) => c.name)}
+            selected={selected}
+            onChange={setSelected}
+            idPrefix="add-record-cat"
+          />
+        </Field>
         <div className="flex gap-3 mt-2">
           <Button className="flex-1" onClick={submit}>
             添加
@@ -431,52 +553,72 @@ function AddRecordDialog({
   );
 }
 
-function RenameRecordDialog({
+function EditRecordDialog({
   target,
   onOpenChange,
+  categories,
   onDone,
 }: {
   target: AdminRecord | null;
   onOpenChange: (open: boolean) => void;
+  categories: AdminCategory[];
   onDone: () => void;
 }) {
   return (
     <Dialog open={target !== null} onOpenChange={onOpenChange}>
-      <DialogContent title="修改记录名称">
+      <DialogContent title="编辑记录">
         {target ? (
-          <RenameRecordForm target={target} onOpenChange={onOpenChange} onDone={onDone} />
+          <EditRecordForm
+            key={target.record_id}
+            target={target}
+            categories={categories}
+            onOpenChange={onOpenChange}
+            onDone={onDone}
+          />
         ) : null}
       </DialogContent>
     </Dialog>
   );
 }
 
-function RenameRecordForm({
+function EditRecordForm({
   target,
+  categories,
   onOpenChange,
   onDone,
 }: {
   target: AdminRecord;
+  categories: AdminCategory[];
   onOpenChange: (open: boolean) => void;
   onDone: () => void;
 }) {
   const [name, setName] = useState(target.record_name);
+  const [selected, setSelected] = useState<string[]>(() => target.categories);
 
   const submit = async () => {
     if (!name.trim()) {
       toast.error("记录名称不能为空");
       return;
     }
+    if (selected.length === 0) {
+      toast.error("请至少选择一个类别");
+      return;
+    }
     try {
-      const result = await renameRecord({ record_id: target.record_id, record_name: name.trim() });
+      const result = await updateRecord({
+        record_id: target.record_id,
+        record_name: name.trim(),
+        categories: selected,
+      });
       if (result.success) {
+        toast.success("保存成功");
         onOpenChange(false);
         onDone();
       } else {
-        toast.error(result.message || "修改失败");
+        toast.error(result.message || "保存失败");
       }
     } catch (error) {
-      toast.error(errorMessage(error, "修改失败"));
+      toast.error(errorMessage(error, "保存失败"));
     }
   };
 
@@ -485,6 +627,17 @@ function RenameRecordForm({
       <Field label="记录名称" required>
         <Input value={name} onChange={(e) => setName(e.target.value)} />
       </Field>
+      <Field label="学分类别（可多选）" required>
+        <CheckboxGroup
+          options={categories.map((c) => c.name)}
+          selected={selected}
+          onChange={setSelected}
+          idPrefix="edit-record-cat"
+        />
+      </Field>
+      <p className="text-xs text-[#888] leading-relaxed">
+        缩减类别时，若仍有条目使用被移除的类别，需要先调整这些条目。
+      </p>
       <div className="flex gap-3 mt-2">
         <Button className="flex-1" onClick={submit}>
           保存
@@ -626,115 +779,30 @@ function PermissionForm({
   );
 }
 
-function EditCategoriesDialog({
-  open,
-  onOpenChange,
-  activity,
-  categories,
-  onDone,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  activity: AdminActivity;
-  categories: AdminCategory[];
-  onDone: () => void;
-}) {
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent title="修改活动类别">
-        <EditCategoriesForm
-          key={activity.activity_id}
-          activity={activity}
-          categories={categories}
-          onOpenChange={onOpenChange}
-          onDone={onDone}
-        />
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function EditCategoriesForm({
-  activity,
-  categories,
-  onOpenChange,
-  onDone,
-}: {
-  activity: AdminActivity;
-  categories: AdminCategory[];
-  onOpenChange: (open: boolean) => void;
-  onDone: () => void;
-}) {
-  const [selected, setSelected] = useState<string[]>(() => activity.categories);
-
-  const submit = async () => {
-    if (selected.length === 0) {
-      toast.error("请至少选择一个类别");
-      return;
-    }
-    try {
-      const result = await updateActivity({
-        activity_id: activity.activity_id,
-        categories: selected,
-      });
-      if (result.success) {
-        toast.success("类别修改成功");
-        onOpenChange(false);
-        onDone();
-      } else {
-        toast.error(result.message || "保存失败");
-      }
-    } catch (error) {
-      toast.error(errorMessage(error, "保存失败"));
-    }
-  };
-
-  return (
-    <>
-      <Field label="活动名称">
-        <Input value={activity.name} readOnly />
-      </Field>
-      <Field label="活动类别（可多选）" required>
-        <CheckboxGroup
-          options={categories.map((c) => c.name)}
-          selected={selected}
-          onChange={setSelected}
-          idPrefix="edit-act-cat"
-        />
-      </Field>
-      <div className="flex gap-3 mt-2">
-        <Button className="flex-1" onClick={submit}>
-          保存
-        </Button>
-        <Button variant="secondary" className="flex-1" onClick={() => onOpenChange(false)}>
-          取消
-        </Button>
-      </div>
-    </>
-  );
-}
-
 // ========== 记录详情与条目管理 ==========
 
 function RecordDetailDialog({
   recordId,
-  allCategories,
   canEdit,
   onClose,
 }: {
   recordId: string;
-  allCategories: AdminCategory[];
   canEdit: boolean;
   onClose: () => void;
 }) {
   const [record, setRecord] = useState<AdminRecordDetail | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [addEntryOpen, setAddEntryOpen] = useState(false);
+  const [entryPrefill, setEntryPrefill] = useState<CheckedInMissingStudent | null>(null);
   const [batchAddOpen, setBatchAddOpen] = useState(false);
   const [batchUpdateOpen, setBatchUpdateOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<AdminEntry | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AdminEntry | null>(null);
   const [batchDeleteConfirm, setBatchDeleteConfirm] = useState(false);
+  // 已签到未录入的批量录入对话框
+  const [batchCheckinOpen, setBatchCheckinOpen] = useState(false);
+  // 已签到但本记录还没有学分条目的学生（是否录入由人工决定）
+  const [checkinMissing, setCheckinMissing] = useState<CheckedInMissingStudent[]>([]);
 
   const load = useCallback(() => {
     getRecordDetail(recordId)
@@ -745,7 +813,14 @@ function RecordDetailDialog({
         }
       })
       .catch((error) => toast.error(errorMessage(error, "加载条目失败")));
-  }, [recordId]);
+    if (canEdit) {
+      getCheckedInMissing(recordId)
+        .then((data) => {
+          if (data.success) setCheckinMissing(data.students);
+        })
+        .catch(() => undefined);
+    }
+  }, [recordId, canEdit]);
 
   useEffect(load, [load]);
 
@@ -782,6 +857,49 @@ function RecordDetailDialog({
               <Button size="sm" variant="danger" onClick={() => setBatchDeleteConfirm(true)}>
                 批量删除选中
               </Button>
+            </div>
+          ) : null}
+
+          {canEdit && checkinMissing.length > 0 ? (
+            <div className="mb-4 rounded-md border border-[#ffe0b2] bg-[#fffaf0] p-3">
+              <div className="mb-2 flex items-center gap-3">
+                <p className="text-sm font-medium text-[#8a5a00]">
+                  已签到未录入（{checkinMissing.length} 人）— 是否录入由人工决定
+                </p>
+                <Button
+                  size="sm"
+                  className="ml-auto"
+                  onClick={() => setBatchCheckinOpen(true)}
+                >
+                  批量录入
+                </Button>
+              </div>
+              <div className="max-h-40 overflow-y-auto">
+                {checkinMissing.map((student) => (
+                  <div
+                    key={student.student_id}
+                    className="flex items-center gap-3 py-1 text-sm"
+                  >
+                    <span className="font-mono">{student.student_id}</span>
+                    <span>{student.student_name}</span>
+                    {student.intended_category ? (
+                      <span className="text-[#777]">意向：{student.intended_category}</span>
+                    ) : null}
+                    <span className="text-xs text-[#999]">{student.checked_in_at}</span>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      className="ml-auto"
+                      onClick={() => {
+                        setEntryPrefill(student);
+                        setAddEntryOpen(true);
+                      }}
+                    >
+                      录入
+                    </Button>
+                  </div>
+                ))}
+              </div>
             </div>
           ) : null}
 
@@ -858,24 +976,41 @@ function RecordDetailDialog({
       {record ? (
         <>
           <AddEntryDialog
+            key={entryPrefill?.student_id ?? "blank"}
             open={addEntryOpen}
-            onOpenChange={setAddEntryOpen}
+            onOpenChange={(open) => {
+              setAddEntryOpen(open);
+              if (!open) setEntryPrefill(null);
+            }}
             recordId={recordId}
-            allCategories={allCategories}
+            categories={record.categories}
+            prefill={entryPrefill}
             onDone={load}
           />
           <BatchAddEntriesDialog
             open={batchAddOpen}
             onOpenChange={setBatchAddOpen}
             recordId={recordId}
-            activityCategories={record.activity_categories}
+            activityCategories={record.categories}
             onDone={load}
           />
+          {batchCheckinOpen ? (
+            <BatchCheckinEntriesDialog
+              recordId={recordId}
+              categories={record.categories}
+              students={checkinMissing}
+              onClose={() => setBatchCheckinOpen(false)}
+              onDone={() => {
+                setBatchCheckinOpen(false);
+                load();
+              }}
+            />
+          ) : null}
           <BatchUpdateDialog
             open={batchUpdateOpen}
             onOpenChange={setBatchUpdateOpen}
             recordId={recordId}
-            activityCategories={record.activity_categories}
+            activityCategories={record.categories}
             selectedIds={selectedIds}
             onDone={load}
           />
@@ -883,7 +1018,7 @@ function RecordDetailDialog({
             target={editTarget}
             onOpenChange={(open) => !open && setEditTarget(null)}
             recordId={recordId}
-            activityCategories={record.activity_categories}
+            activityCategories={record.categories}
             onDone={load}
           />
           <ConfirmDialog
@@ -935,18 +1070,26 @@ function AddEntryDialog({
   open,
   onOpenChange,
   recordId,
-  allCategories,
+  categories,
+  prefill,
   onDone,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   recordId: string;
-  allCategories: AdminCategory[];
+  categories: string[];
+  /** 从"已签到未录入"面板一键带入的学生信息（学分仍由人工填写） */
+  prefill?: CheckedInMissingStudent | null;
   onDone: () => void;
 }) {
-  const [studentId, setStudentId] = useState("");
+  // 预填值经 key 重挂载注入（父组件以 prefill 学号为 key），此处只作初始值
+  const [studentId, setStudentId] = useState(prefill?.student_id ?? "");
   const [credits, setCredits] = useState("");
-  const [selected, setSelected] = useState<string[]>([]);
+  const [selected, setSelected] = useState<string[]>(
+    prefill?.intended_category && categories.includes(prefill.intended_category)
+      ? [prefill.intended_category]
+      : [],
+  );
 
   const submit = async () => {
     try {
@@ -978,9 +1121,9 @@ function AddEntryDialog({
         <Field label="学分" required>
           <Input type="number" step="0.1" value={credits} onChange={(e) => setCredits(e.target.value)} />
         </Field>
-        <Field label="类别（可多选）" required>
+        <Field label="类别（可多选，限记录类别）" required>
           <CheckboxGroup
-            options={allCategories.map((c) => c.name)}
+            options={categories}
             selected={selected}
             onChange={setSelected}
             idPrefix="add-entry-cat"
@@ -991,6 +1134,125 @@ function AddEntryDialog({
             添加
           </Button>
           <Button variant="secondary" className="flex-1" onClick={() => onOpenChange(false)}>
+            取消
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** 已签到未录入学生的批量录入：默认全选学生与全部类别（意向类别仅供参考），均可修改。 */
+function BatchCheckinEntriesDialog({
+  recordId,
+  categories,
+  students,
+  onClose,
+  onDone,
+}: {
+  recordId: string;
+  categories: string[];
+  students: CheckedInMissingStudent[];
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [selectedIds, setSelectedIds] = useState<string[]>(() =>
+    students.map((student) => student.student_id),
+  );
+  const [credits, setCredits] = useState("0");
+  const [selectedCats, setSelectedCats] = useState<string[]>(() => categories);
+  const [submitting, setSubmitting] = useState(false);
+
+  const toggleOne = (studentId: string, checked: boolean) => {
+    setSelectedIds((prev) =>
+      checked ? [...prev, studentId] : prev.filter((id) => id !== studentId),
+    );
+  };
+
+  const submit = async () => {
+    if (selectedIds.length === 0) {
+      toast.error("请选择要录入的学生");
+      return;
+    }
+    if (selectedCats.length === 0) {
+      toast.error("请至少选择一个类别");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const result = await batchAddEntries({
+        record_id: recordId,
+        entries_text: selectedIds.join("\n"),
+        categories: selectedCats,
+        default_credits: parseFloat(credits) || 0,
+      });
+      if (result.success) {
+        let message = `批量录入成功！新增: ${result.added}，更新: ${result.updated}`;
+        if (result.errors.length > 0) message += `；错误: ${result.errors.join("；")}`;
+        toast.success(message);
+        onDone();
+      } else {
+        toast.error(result.message || "录入失败");
+      }
+    } catch (error) {
+      toast.error(errorMessage(error, "录入失败"));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent title={`批量录入已签到学生（${selectedIds.length}/${students.length} 人）`}>
+        <div className="mb-3 max-h-48 overflow-y-auto rounded-md border border-[#e5e5e5] p-2">
+          <label className="flex items-center gap-2 px-1 py-1 text-sm font-medium">
+            <Checkbox
+              checked={selectedIds.length === students.length}
+              onCheckedChange={(checked) =>
+                setSelectedIds(checked === true ? students.map((s) => s.student_id) : [])
+              }
+            />
+            全选
+          </label>
+          {students.map((student) => (
+            <label
+              key={student.student_id}
+              className="flex items-center gap-2 px-1 py-1 text-sm"
+            >
+              <Checkbox
+                checked={selectedIds.includes(student.student_id)}
+                onCheckedChange={(checked) => toggleOne(student.student_id, checked === true)}
+              />
+              <span className="font-mono">{student.student_id}</span>
+              <span>{student.student_name}</span>
+              {student.intended_category ? (
+                <span className="text-xs text-[#999]">意向：{student.intended_category}</span>
+              ) : null}
+            </label>
+          ))}
+        </div>
+        <Field label="学分" required>
+          <Input
+            type="number"
+            step="0.1"
+            value={credits}
+            onChange={(e) => setCredits(e.target.value)}
+            className="max-w-[200px]"
+          />
+        </Field>
+        <Field label="类别（默认全选，可修改；意向类别仅供参考）" required>
+          <CheckboxGroup
+            options={categories}
+            selected={selectedCats}
+            onChange={setSelectedCats}
+            idPrefix="batch-checkin-cat"
+          />
+        </Field>
+        <div className="flex gap-3 mt-2">
+          <Button className="flex-1" onClick={submit} disabled={submitting}>
+            {submitting ? "录入中..." : "批量录入"}
+          </Button>
+          <Button variant="secondary" className="flex-1" onClick={onClose}>
             取消
           </Button>
         </div>

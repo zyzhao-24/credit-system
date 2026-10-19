@@ -117,16 +117,18 @@ def import_legacy_payload(payload: dict[str, Any]) -> dict[str, int]:
             max_participants=item.get("max_participants", 0),
             position=activity_position,
         )
-        activity.categories = item.get("categories", [])
         activity.allowed_editors = item.get("allowed_editors", [])
         db.session.add(activity)
 
+        # 学分类别设在记录一级：legacy 的活动级类别复制到该活动的每条记录
+        activity_categories = item.get("categories", [])
         for record_position, record_item in enumerate(item.get("records", [])):
             record = Record(
                 record_id=record_item["record_id"],
                 record_name=record_item["record_name"],
                 position=record_position,
             )
+            record.categories = activity_categories
             activity.records.append(record)
             for entry_position, entry_item in enumerate(record_item.get("entries", [])):
                 entry = Entry(
