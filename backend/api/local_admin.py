@@ -29,6 +29,7 @@ from backend.services import emailer
 from backend.services.otp_service import (
     begin_pending_otp,
     decode_pending_otp,
+    revoke_trusted_devices,
     set_totp_secret,
 )
 from backend.utils.crypto import encrypt_secret
@@ -320,6 +321,9 @@ def reset_password():
     if generated:
         password = secrets.token_urlsafe(12)
     admin.password_hash = hash_password_digest(client_password_digest(password))
+    # 重置 system 密码后：旧令牌与"免 OTP"信任记录全部失效
+    admin.token_version = (admin.token_version or 0) + 1
+    revoke_trusted_devices(admin)
     db.session.commit()
     source = "系统随机生成的强密码" if generated else "您自定义的密码"
     return _render(

@@ -44,6 +44,11 @@ class Config:
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ENGINE_OPTIONS = {"connect_args": {"timeout": 5}}
     JWT_EXPIRES_SECONDS = int(os.getenv("JWT_EXPIRES_SECONDS", "43200"))
+    # 登录/动态码防爆破限速（按账号计失败次数，超限返回 429）
+    LOGIN_FAIL_MAX_PER_MINUTE = int(os.getenv("LOGIN_FAIL_MAX_PER_MINUTE", "5"))
+    LOGIN_FAIL_MAX_PER_HOUR = int(os.getenv("LOGIN_FAIL_MAX_PER_HOUR", "20"))
+    OTP_FAIL_MAX_PER_TICKET = int(os.getenv("OTP_FAIL_MAX_PER_TICKET", "5"))
+    OTP_FAIL_MAX_PER_MINUTE = int(os.getenv("OTP_FAIL_MAX_PER_MINUTE", "10"))
     CORS_ORIGINS = [
         origin.strip()
         for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")

@@ -8,6 +8,8 @@ export interface TokenResponse {
   role: string;
   department: string;
   name: string;
+  /** true = 当前是系统生成的初始密码，必须立即改密后才能使用系统 */
+  password_reset_required?: boolean;
 }
 
 /** 登录第一步（密码）的响应：密码正确后进入 OTP 步骤而非直接发令牌。 */
@@ -232,6 +234,8 @@ export interface AdminOtpBundle {
   otp_secret: string;
   otp_uri: string;
   otp_qr: string;
+  /** 创建账号时若未指定密码，服务端生成的随机初始密码（仅本次响应可见） */
+  initial_password?: string;
 }
 
 /** 待生效的 OTP 绑定：二维码 + 票据，验证/确认后候选密钥才写入。 */
@@ -448,4 +452,12 @@ export interface BatchImportResult {
   ignored?: number;
   errors: string[];
   message?: string;
+  /** 未填第三列密码的新学生：服务端生成的随机初始密码（仅本次响应可见） */
+  generated_passwords?: GeneratedInitialPassword[];
+}
+
+export interface GeneratedInitialPassword {
+  student_id: string;
+  name: string;
+  password: string;
 }

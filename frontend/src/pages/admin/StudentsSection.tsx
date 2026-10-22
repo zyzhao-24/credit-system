@@ -11,7 +11,7 @@ import {
   resetStudentOtp,
   updateAdminStudentInfo,
 } from "@/api/service";
-import type { AdminStudent } from "@/api/types";
+import type { AdminStudent, GeneratedInitialPassword } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Input, Textarea } from "@/components/ui/input";
@@ -205,17 +205,28 @@ function AddStudentDialog({
 }) {
   const [studentId, setStudentId] = useState("");
   const [name, setName] = useState("");
-  const [password, setPassword] = useState("123456");
+  const [password, setPassword] = useState("");
+  const [initialPassword, setInitialPassword] = useState("");
 
   const submit = async () => {
     try {
-      const result = await createStudent({ student_id: studentId.trim(), name: name.trim(), password });
+      const payload: { student_id: string; name: string; password?: string } = {
+        student_id: studentId.trim(),
+        name: name.trim(),
+      };
+      if (password) payload.password = password;
+      const result = await createStudent(payload);
       if (result.success) {
-        toast.success(result.message || "添加成功");
+        if (result.initial_password) {
+          // 随机初始密码仅本次可见：弹出一次性展示，不用 toast（会消失）
+          setInitialPassword(result.initial_password);
+        } else {
+          toast.success(result.message || "添加成功");
+        }
         onOpenChange(false);
         setStudentId("");
         setName("");
-        setPassword("123456");
+        setPassword("");
         onDone();
       } else {
         toast.error(result.message || "添加失败");
@@ -225,28 +236,62 @@ function AddStudentDialog({
     }
   };
 
+  const copyInitialPassword = async () => {
+    try {
+      await navigator.clipboard.writeText(initialPassword);
+      toast.success("初始密码已复制");
+    } catch {
+      toast.error("复制失败，请手动抄录");
+    }
+  };
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent title="添加学生">
-        <Field label="学号" required>
-          <Input value={studentId} onChange={(e) => setStudentId(e.target.value)} />
-        </Field>
-        <Field label="姓名" required>
-          <Input value={name} onChange={(e) => setName(e.target.value)} />
-        </Field>
-        <Field label="密码（默认123456）">
-          <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-        </Field>
-        <div className="flex gap-3 mt-2">
-          <Button className="flex-1" onClick={submit}>
-            添加
-          </Button>
-          <Button variant="secondary" className="flex-1" onClick={() => onOpenChange(false)}>
-            取消
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent title="添加学生">
+          <Field label="学号" required>
+            <Input value={studentId} onChange={(e) => setStudentId(e.target.value)} />
+          </Field>
+          <Field label="姓名" required>
+            <Input value={name} onChange={(e) => setName(e.target.value)} />
+          </Field>
+          <Field label="密码（留空则随机生成）">
+            <Input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="留空自动生成随机初始密码"
+            />
+          </Field>
+          <div className="flex gap-3 mt-2">
+            <Button className="flex-1" onClick={submit}>
+              添加
+            </Button>
+            <Button variant="secondary" className="flex-1" onClick={() => onOpenChange(false)}>
+              取消
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={initialPassword !== ""} onOpenChange={(o) => !o && setInitialPassword("")}>
+        <DialogContent title="学生已添加" className="max-w-[420px]">
+          <p className="text-[13px] text-danger -mt-2 mb-3 leading-relaxed">
+            ⚠️ 随机初始密码仅显示这一次，请立即转交学生；学生首次登录需用初始密码登录并修改密码。
+          </p>
+          <Field label="初始密码">
+            <Input value={initialPassword} readOnly className="font-mono bg-[#f5f5f5]" />
+          </Field>
+          <div className="flex gap-3 mt-2">
+            <Button className="flex-1" onClick={copyInitialPassword}>
+              复制密码
+            </Button>
+            <Button variant="secondary" className="flex-1" onClick={() => setInitialPassword("")}>
+              我已保存
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -260,6 +305,7 @@ function BatchStudentDialog({
   onDone: () => void;
 }) {
   const [csvData, setCsvData] = useState("");
+  const [generated, setGenerated] = useState<GeneratedInitialPassword[]>([]);
 
   const submit = async () => {
     try {
@@ -270,6 +316,10 @@ function BatchStudentDialog({
             result.errors.length > 0 ? `；错误: ${result.errors.join(", ")}` : ""
           }`,
         );
+        // 未填密码的新学生：随机初始密码仅本次响应可见，弹窗展示以便转交
+        if (result.generated_passwords && result.generated_passwords.length > 0) {
+          setGenerated(result.generated_passwords);
+        }
         onOpenChange(false);
         setCsvData("");
         onDone();
@@ -281,33 +331,65 @@ function BatchStudentDialog({
     }
   };
 
+  const generatedText = generated
+    .map((item) => `${item.student_id},${item.name},${item.password}`)
+    .join("\n");
+
+  const copyGenerated = async () => {
+    try {
+      await navigator.clipboard.writeText(generatedText);
+      toast.success("已复制全部初始密码");
+    } catch {
+      toast.error("复制失败，请手动抄录");
+    }
+  };
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent title="批量导入学生">
-        <p className="text-sm">格式：学号,姓名,密码（每行一个学生，无表头）</p>
-        <p className="text-xs text-[#616161] mt-1 mb-3 leading-relaxed">
-          • 学号只能包含数字（可含前导零）
-          <br />• 密码可省略，默认为 123456
-          <br />• 已有学生只有填写第三列密码才会更新密码
-        </p>
-        <Field label="学生数据">
-          <Textarea
-            rows={10}
-            value={csvData}
-            onChange={(event) => setCsvData(event.target.value)}
-            placeholder={"学号,姓名,密码\n2021001,张三,123456\n2021002,李四,123456"}
-          />
-        </Field>
-        <div className="flex gap-3 mt-2">
-          <Button className="flex-1" onClick={submit}>
-            导入
-          </Button>
-          <Button variant="secondary" className="flex-1" onClick={() => onOpenChange(false)}>
-            取消
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent title="批量导入学生">
+          <p className="text-sm">格式：学号,姓名,密码（每行一个学生，无表头）</p>
+          <p className="text-xs text-[#616161] mt-1 mb-3 leading-relaxed">
+            • 学号只能包含数字（可含前导零）
+            <br />• 密码可省略，省略则自动生成随机初始密码（导入完成后仅显示一次），学生首次登录需改密
+            <br />• 已有学生只有填写第三列密码才会更新密码
+          </p>
+          <Field label="学生数据">
+            <Textarea
+              rows={10}
+              value={csvData}
+              onChange={(event) => setCsvData(event.target.value)}
+              placeholder={"学号,姓名,密码\n2021001,张三,\n2021002,李四,pass456"}
+            />
+          </Field>
+          <div className="flex gap-3 mt-2">
+            <Button className="flex-1" onClick={submit}>
+              导入
+            </Button>
+            <Button variant="secondary" className="flex-1" onClick={() => onOpenChange(false)}>
+              取消
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={generated.length > 0} onOpenChange={(o) => !o && setGenerated([])}>
+        <DialogContent title="随机初始密码（仅显示一次）" className="max-w-[480px]">
+          <p className="text-[13px] text-danger -mt-2 mb-3 leading-relaxed">
+            ⚠️ 以下学生未指定密码，系统已生成随机初始密码。请立即保存并转交；
+            学生首次登录需用初始密码登录并修改密码。关闭本窗口后将无法再次查看。
+          </p>
+          <Textarea rows={Math.min(generated.length + 1, 12)} value={generatedText} readOnly className="font-mono text-[13px] bg-[#f5f5f5]" />
+          <div className="flex gap-3 mt-3">
+            <Button className="flex-1" onClick={copyGenerated}>
+              复制全部
+            </Button>
+            <Button variant="secondary" className="flex-1" onClick={() => setGenerated([])}>
+              我已保存
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 

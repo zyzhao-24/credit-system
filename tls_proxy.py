@@ -29,6 +29,8 @@ HANDSHAKE_TIMEOUT = 10   # 首字节嗅探 + TLS 握手的总时限（秒）
 IDLE_TIMEOUT = 75        # 已建立连接的空闲回收（秒），浏览器 keep-alive 到期自动重连
 BUF_SIZE = 65536
 BACKLOG = 256
+# 并发连接上限：每连接一个线程，超限直接拒绝，防止慢连接耗尽线程/内存
+MAX_CONNECTIONS = 512
 
 _LOCAL_ADDRS = {"127.0.0.1", "::1"}
 _TLS_HANDSHAKE_BYTE = b"\x16"
@@ -105,8 +107,19 @@ def serve(port: int, cert_path: str, key_path: str,
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     listener.bind((LISTEN_HOST, port))
     listener.listen(BACKLOG)
+    slots = threading.BoundedSemaphore(MAX_CONNECTIONS)
+
+    def guarded_handle(client: socket.socket, peer: str) -> None:
+        try:
+            _handle(client, peer, context, upstream)
+        finally:
+            slots.release()
+
     while True:
         client, (peer, _) = listener.accept()
+        if not slots.acquire(blocking=False):
+            client.close()
+            continue
         threading.Thread(
-            target=_handle, args=(client, peer, context, upstream), daemon=True
+            target=guarded_handle, args=(client, peer), daemon=True
         ).start()

@@ -36,6 +36,31 @@ def app(tmp_path):
         SECRET_KEY="test-secret-key-with-at-least-32-bytes",
         SQLALCHEMY_DATABASE_URI=f"sqlite:///{database_path.as_posix()}",
         CORS_ORIGINS=[],
+        # 常规测试高频登录同一批账号，放宽防爆破限速以免误伤；
+        # 限速本身由 test_auth.py 里使用 raw_app 的专项用例覆盖
+        LOGIN_FAIL_MAX_PER_MINUTE=1000,
+        LOGIN_FAIL_MAX_PER_HOUR=100000,
+        OTP_FAIL_MAX_PER_TICKET=1000,
+        OTP_FAIL_MAX_PER_MINUTE=10000,
+    )
+    with app.app_context():
+        _db.create_all()
+    yield app
+    with app.app_context():
+        _db.session.remove()
+        _db.drop_all()
+        _db.engine.dispose()
+
+
+@pytest.fixture()
+def raw_app(tmp_path):
+    """不带任何限速放行的 app，用于验证默认限速阈值本身。"""
+    database_path = tmp_path / "test-raw.db"
+    app = create_app(
+        TESTING=True,
+        SECRET_KEY="test-secret-key-with-at-least-32-bytes",
+        SQLALCHEMY_DATABASE_URI=f"sqlite:///{database_path.as_posix()}",
+        CORS_ORIGINS=[],
     )
     with app.app_context():
         _db.create_all()

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import secrets
+
 from flask import Blueprint, g, jsonify, request
 from sqlalchemy import func
 
@@ -14,10 +16,15 @@ from backend.services.otp_service import (
     decode_pending_otp,
     has_totp,
     pending_otp_bundle,
+    revoke_trusted_devices,
     set_totp_secret,
 )
 from backend.utils.otp import qr_png_data_uri
-from backend.utils.passwords import client_password_digest, hash_password_digest
+from backend.utils.passwords import (
+    client_password_digest,
+    hash_password_digest,
+    verify_password_digest,
+)
 
 
 admin_settings_bp = Blueprint("admin_settings", __name__)
@@ -162,7 +169,7 @@ def manage_admins():
 
     if request.method == "POST":
         admin_id = data.get("admin_id", "").strip()
-        password = data.get("password", "admin123")
+        password = data.get("password", "").strip()
         role = data.get("role", "admin")
         department = data.get("department", "")
         if not admin_id:
@@ -174,11 +181,17 @@ def manage_admins():
             return _error("只能通过接口创建普通管理员（系统管理员为内置 system 账号）")
         if db.session.get(Admin, admin_id):
             return _error("账号已存在")
+        # 未指定密码时生成随机初始密码（仅本次响应可见），并要求首次登录改密
+        initial_password = ""
+        if not password:
+            password = secrets.token_urlsafe(9)
+            initial_password = password
         admin = Admin(
             admin_id=admin_id,
             password_hash=hash_password_digest(client_password_digest(password)),
             role=role,
             department=department,
+            password_reset_required=bool(initial_password),
         )
         db.session.add(admin)
         # 创建时必须绑定 OTP：密钥随响应一次性返回
@@ -190,6 +203,7 @@ def manage_admins():
                 "otp_secret": secret,
                 "otp_uri": uri,
                 "otp_qr": qr_png_data_uri(uri),
+                "initial_password": initial_password,
             }
         )
 
@@ -204,6 +218,10 @@ def manage_admins():
             return _error("不能修改自己的部门")
         if "password" in data:
             admin.password_hash = hash_password_digest(client_password_digest(data["password"]))
+            admin.password_reset_required = False
+            # 重置密码后：该账号旧令牌与"免 OTP"信任记录全部失效
+            admin.token_version = (admin.token_version or 0) + 1
+            revoke_trusted_devices(admin)
         if "role" in data:
             # 不允许通过接口提升为系统管理员（固定只有内置 system）
             if data["role"] != "admin":
@@ -229,6 +247,36 @@ def manage_admins():
     db.session.delete(admin)
     db.session.commit()
     return jsonify({"success": True})
+
+
+@admin_settings_bp.post("/api/admin/change_password")
+@require_admin
+def change_own_password():
+    """管理员自助改密（含首次登录强制修改初始密码）。
+
+    成功后该账号旧令牌与"免 OTP"信任记录全部失效，需重新登录。
+    """
+    data = request.get_json(silent=True) or {}
+    old_digest = data.get("old_password_hash", "").strip().lower()
+    new_password = data.get("new_password", "")
+    new_digest = data.get("new_password_hash", "").strip().lower()
+
+    admin = db.session.get(Admin, g.current_identity.get("sub"))
+    if admin is None:
+        return _error("管理员不存在")
+    if not verify_password_digest(admin.password_hash, old_digest):
+        return _error("原密码错误")
+    if not new_password and not new_digest:
+        return _error("新密码不能为空")
+    if new_password and len(new_password) < 6:
+        return _error("新密码至少需要6位字符")
+
+    admin.password_hash = hash_password_digest(new_digest or client_password_digest(new_password))
+    admin.password_reset_required = False
+    admin.token_version = (admin.token_version or 0) + 1
+    revoke_trusted_devices(admin)
+    db.session.commit()
+    return jsonify({"success": True, "message": "密码修改成功"})
 
 
 @admin_settings_bp.post("/api/admin/admins/reset_otp")

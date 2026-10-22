@@ -25,6 +25,8 @@ def issue_token(
         "role": identity.get("role", ""),
         "department": identity.get("department", ""),
         "name": identity.get("name", ""),
+        # 令牌版本号：账号改密/重置/登出时自增，旧令牌随之失效
+        "tv": identity.get("tv", 0),
         "iat": now,
         "exp": now + timedelta(seconds=expires_seconds),
         **(extra or {}),

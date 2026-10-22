@@ -252,9 +252,13 @@ export async function getAdminStudents(): Promise<{
 export async function createStudent(payload: {
   student_id: string;
   name: string;
-  password: string;
-}): Promise<BasicResponse> {
-  const { data } = await api.post<BasicResponse>("/api/admin/students", payload);
+  /** 留空则服务端生成随机初始密码（随响应一次性返回），学生首次登录强制改密 */
+  password?: string;
+}): Promise<BasicResponse & { initial_password?: string }> {
+  const { data } = await api.post<BasicResponse & { initial_password?: string }>(
+    "/api/admin/students",
+    payload,
+  );
   return data;
 }
 
@@ -382,7 +386,8 @@ export async function getAdmins(): Promise<{ success: boolean; admins: AdminAcco
 
 export async function createAdmin(payload: {
   admin_id: string;
-  password: string;
+  /** 留空则服务端生成随机初始密码（随响应一次性返回），首次登录强制改密 */
+  password?: string;
   role: string;
   department: string;
 }): Promise<BasicResponse & Partial<AdminOtpBundle>> {
@@ -390,6 +395,18 @@ export async function createAdmin(payload: {
     "/api/admin/admins",
     payload,
   );
+  return data;
+}
+
+/** 管理员自助改密（含首次登录强制修改初始密码）；成功后旧令牌失效，需重新登录。 */
+export async function changeAdminPassword(
+  oldPasswordDigest: string,
+  newPassword: string,
+): Promise<BasicResponse> {
+  const { data } = await api.post<BasicResponse>("/api/admin/change_password", {
+    old_password_hash: oldPasswordDigest,
+    new_password: newPassword,
+  });
   return data;
 }
 

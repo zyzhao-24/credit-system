@@ -336,7 +336,7 @@ def test_student_self_otp_reset_requires_code(app, database, seed_legacy_payload
 
 
 def test_trusted_device_skips_otp_for_a_week(app, database, seed_legacy_payload, minimal_payload):
-    """OTP 验证成功后，一周内同设备（Cookie）或同 IP 登录第一步直接发令牌。"""
+    """OTP 验证成功后，信任期内同设备（Cookie）免 OTP；回环 IP 不作为信任锚点。"""
     seed_legacy_payload(minimal_payload)
     from datetime import datetime, timedelta
 
@@ -357,7 +357,7 @@ def test_trusted_device_skips_otp_for_a_week(app, database, seed_legacy_payload,
     assert "trusted_device" in step2.headers.get("Set-Cookie", "")
     rows = TrustedDevice.query.filter_by(user_type="student", account_id="1001").all()
     assert len(rows) == 1
-    assert rows[0].expires_at > datetime.now() + timedelta(days=6)
+    assert rows[0].expires_at > datetime.now() + timedelta(days=2)
 
     # 同设备（带 Cookie）：第一步直接发令牌
     again = _step1(client, "1001", "pass123", "student")
@@ -365,7 +365,8 @@ def test_trusted_device_skips_otp_for_a_week(app, database, seed_legacy_payload,
     assert again.get_json().get("access_token")
     assert not again.get_json().get("otp_required")
 
-    # 无 Cookie 但同 IP（换浏览器、网络未变）：同样免 OTP
+    # 无 Cookie 且来源是回环地址（生产部署中 tls_proxy 转发后的视角）：
+    # 回环不可作为信任锚点，必须重新过 OTP
     other_browser = app.test_client()
     by_ip = other_browser.post(
         "/api/auth/token",
@@ -376,9 +377,24 @@ def test_trusted_device_skips_otp_for_a_week(app, database, seed_legacy_payload,
             "user_type": "student",
         },
     )
-    assert by_ip.get_json().get("access_token")
+    assert by_ip.get_json().get("otp_required") is True
+    assert not by_ip.get_json().get("access_token")
 
-    # 信任是账号级的：同 IP 的别的账号仍要 OTP
+    # 伪造 X-Forwarded-For 也不能获得信任（应用不读该头）
+    spoofed = other_browser.post(
+        "/api/auth/token",
+        data={
+            "grant_type": "password",
+            "username": "1001",
+            "password": client_password_digest("pass123"),
+            "user_type": "student",
+        },
+        environ_overrides={"REMOTE_ADDR": "127.0.0.1"},
+        headers={"X-Forwarded-For": "203.0.113.7"},
+    )
+    assert spoofed.get_json().get("otp_required") is True
+
+    # 别的账号仍要 OTP
     other_account = other_browser.post(
         "/api/auth/token",
         data={
@@ -396,6 +412,58 @@ def test_trusted_device_skips_otp_for_a_week(app, database, seed_legacy_payload,
     expired = _step1(client, "1001", "pass123", "student")
     assert expired.get_json()["otp_required"] is True
     assert TrustedDevice.query.filter_by(user_type="student", account_id="1001").count() == 0
+
+
+def test_real_remote_ip_still_trusted(app, database, seed_legacy_payload, minimal_payload):
+    """非回环的真实来源 IP 仍享有 IP 信任（开发/直连部署形态）。"""
+    seed_legacy_payload(minimal_payload)
+    client = app.test_client()
+    remote = {"REMOTE_ADDR": "203.0.113.7"}
+    step1 = client.post(
+        "/api/auth/token",
+        data={
+            "grant_type": "password",
+            "username": "1001",
+            "password": client_password_digest("pass123"),
+            "user_type": "student",
+        },
+        environ_overrides=remote,
+    )
+    student = database.session.get(Student, "1001")
+    secret = get_totp_secret(student)
+    step2 = client.post(
+        "/api/auth/token/verify",
+        json={"otp_ticket": step1.get_json()["otp_ticket"], "otp_code": pyotp.TOTP(secret).now()},
+        environ_overrides=remote,
+    )
+    assert step2.get_json()["success"] is True
+
+    # 无 Cookie 但同一真实 IP：免 OTP
+    other_browser = app.test_client()
+    same_ip = other_browser.post(
+        "/api/auth/token",
+        data={
+            "grant_type": "password",
+            "username": "1001",
+            "password": client_password_digest("pass123"),
+            "user_type": "student",
+        },
+        environ_overrides=remote,
+    )
+    assert same_ip.get_json().get("access_token")
+
+    # 换一个 IP：必须重新过 OTP
+    other_ip = other_browser.post(
+        "/api/auth/token",
+        data={
+            "grant_type": "password",
+            "username": "1001",
+            "password": client_password_digest("pass123"),
+            "user_type": "student",
+        },
+        environ_overrides={"REMOTE_ADDR": "203.0.113.8"},
+    )
+    assert other_ip.get_json()["otp_required"] is True
 
 
 def test_otp_reset_revokes_trusted_login(
@@ -433,3 +501,181 @@ def test_otp_reset_revokes_trusted_login(
     after = _step1(client, "1001", "pass123", "student")
     assert after.get_json()["otp_required"] is True
     assert not after.get_json().get("access_token")
+
+
+
+# ========== 安全回归：限速、令牌吊销、强制改密 ==========
+
+
+def _seed_raw_app(raw_app, payload):
+    """raw_app 与 conftest 的 app 是两个实例，播种必须直接用 raw_app 的上下文。"""
+    from backend.extensions import db
+    from backend.services.legacy_import import import_legacy_payload
+
+    with raw_app.app_context():
+        from backend.models import Admin as _Admin
+
+        for admin_id in payload.get("admins", {}):
+            existing = db.session.get(_Admin, admin_id)
+            if existing is not None:
+                db.session.delete(existing)
+            db.session.flush()
+        import_legacy_payload(payload)
+        db.session.commit()
+
+
+def test_password_failures_are_rate_limited(raw_app, minimal_payload):
+    """默认阈值下，同一账号连续密码失败会被限速（429 + Retry-After）。"""
+    _seed_raw_app(raw_app, minimal_payload)
+    client = raw_app.test_client()
+
+    got_429 = False
+    for _ in range(10):
+        response = client.post(
+            "/api/auth/token",
+            data={
+                "grant_type": "password",
+                "username": "1002",
+                "password": client_password_digest("wrong-password"),
+                "user_type": "student",
+            },
+        )
+        if response.status_code == 429:
+            got_429 = True
+            assert response.headers.get("Retry-After")
+            break
+        assert response.status_code == 401
+    assert got_429, "连续密码失败未触发限速"
+
+    # 限速期内连正确密码也不再放行
+    blocked = _step1(client, "1002", "pass456", "student")
+    assert blocked.status_code == 429
+
+
+def test_otp_ticket_locked_after_repeated_failures(raw_app, minimal_payload):
+    """同一 otp_ticket 连续输错达到上限即作废，之后正确验证码也不再接受。"""
+    _seed_raw_app(raw_app, minimal_payload)
+    client = raw_app.test_client()
+
+    # 与限速用例错开账号：1002 的失败计数会影响 1002 的登录限速判断
+    step1 = _step1(client, "1001", "pass123", "student")
+    ticket = step1.get_json()["otp_ticket"]
+    with raw_app.app_context():
+        from backend.extensions import db
+
+        secret = get_totp_secret(db.session.get(Student, "1001"))
+
+    for _ in range(5):
+        wrong = client.post(
+            "/api/auth/token/verify", json={"otp_ticket": ticket, "otp_code": "000000"}
+        )
+        assert wrong.status_code != 429
+    # 第 6 次起票据已作废，即使验证码正确也拒绝
+    dead = client.post(
+        "/api/auth/token/verify",
+        json={"otp_ticket": ticket, "otp_code": pyotp.TOTP(secret).now()},
+    )
+    assert dead.status_code == 401
+    assert dead.get_json()["success"] is False
+
+
+def test_logout_revokes_access_token(app, database, seed_legacy_payload, minimal_payload, login):
+    """登出是服务端真实吊销：同一令牌登出后立即失效。"""
+    seed_legacy_payload(minimal_payload)
+    client = app.test_client()
+    token = login("1001", "pass123", "student")
+    headers = {"Authorization": token}
+
+    assert client.get("/api/auth/me", headers=headers).status_code == 200
+    assert client.post("/api/auth/logout", headers=headers).status_code == 200
+    assert client.get("/api/auth/me", headers=headers).status_code == 401
+
+
+def test_change_password_revokes_token_and_trust(
+    app, database, seed_legacy_payload, minimal_payload, login
+):
+    """改密后：旧令牌立即失效，"免 OTP"信任记录同时清除。"""
+    seed_legacy_payload(minimal_payload)
+    from backend.models import TrustedDevice
+
+    client = app.test_client()
+    token = login("1001", "pass123", "student")
+    headers = {"Authorization": token}
+    assert TrustedDevice.query.filter_by(user_type="student", account_id="1001").count() == 1
+
+    changed = client.post(
+        "/api/student/change_password",
+        json={
+            "old_password_hash": client_password_digest("pass123"),
+            "new_password": "newpass99",
+        },
+        headers=headers,
+    )
+    assert changed.get_json()["success"] is True
+    # 旧令牌失效、信任记录清空
+    assert client.get("/api/auth/me", headers=headers).status_code == 401
+    assert TrustedDevice.query.filter_by(user_type="student", account_id="1001").count() == 0
+    # 新密码需要重新过 OTP
+    assert _step1(client, "1001", "newpass99", "student").get_json()["otp_required"] is True
+
+
+def test_initial_password_forces_change_on_first_login(
+    app, database, seed_legacy_payload, minimal_payload, login
+):
+    """管理员创建学生不填密码 → 随机初始密码仅返回一次，首次登录强制改密。"""
+    seed_legacy_payload(minimal_payload)
+    client = app.test_client()
+    token = login("system", "adminpass", "admin")
+
+    created = client.post(
+        "/api/admin/students",
+        json={"student_id": "3001", "name": "新学生"},
+        headers={"Authorization": token},
+    )
+    payload = created.get_json()
+    assert payload["success"] is True
+    initial = payload["initial_password"]
+    assert initial and initial != "123456"
+
+    # 首次登录（新学生未绑定 OTP，自动发打桩邮件后过验证码）
+    step1 = _step1(client, "3001", initial, "student")
+    assert step1.get_json()["otp_required"] is True
+    student = database.session.get(Student, "3001")
+    secret = get_totp_secret(student)
+    step2 = client.post(
+        "/api/auth/token/verify",
+        json={"otp_ticket": step1.get_json()["otp_ticket"], "otp_code": pyotp.TOTP(secret).now()},
+    )
+    tokens = step2.get_json()
+    assert tokens["password_reset_required"] is True
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+
+    # 未改密前业务接口一律 403，改密/登出/whoami 放行
+    blocked = client.get("/api/student/my_credits", headers=headers)
+    assert blocked.status_code == 403
+    assert blocked.get_json()["password_reset_required"] is True
+    assert client.get("/api/auth/me", headers=headers).status_code == 200
+
+    changed = client.post(
+        "/api/student/change_password",
+        json={
+            "old_password_hash": client_password_digest(initial),
+            "new_password": "mynewpass1",
+        },
+        headers=headers,
+    )
+    assert changed.get_json()["success"] is True
+
+    # 改密后旧令牌失效（版本号已变），用新密码重新登录后不再要求改密
+    assert client.get("/api/auth/me", headers=headers).status_code == 401
+    step1b = _step1(client, "3001", "mynewpass1", "student")
+    step2b = client.post(
+        "/api/auth/token/verify",
+        json={
+            "otp_ticket": step1b.get_json()["otp_ticket"],
+            "otp_code": pyotp.TOTP(secret).now(),
+        },
+    )
+    assert step2b.get_json()["password_reset_required"] is False
+    fresh = {"Authorization": f"Bearer {step2b.get_json()['access_token']}"}
+    assert client.get("/api/student/my_credits", headers=fresh).status_code == 200

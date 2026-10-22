@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Input, Textarea } from "@/components/ui/input";
 import { OtpBundleDialog } from "@/components/OtpBundleDialog";
+import { ForceChangePasswordDialog } from "@/components/ForceChangePasswordDialog";
 import { Field } from "@/components/common";
 
 const PHONE_PATTERN = /^1[3-9]\d{9}$/;
@@ -27,7 +28,7 @@ const CODE_COUNTDOWN_SECONDS = 60;
 
 /** 学生登录页：登录（密码 + 动态验证码两步） + 注册 + 忘记密码。 */
 export function LoginPage() {
-  const { finishLogin } = useAuth();
+  const { finishLogin, logout } = useAuth();
   const navigate = useNavigate();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -38,6 +39,9 @@ export function LoginPage() {
   const [otpTicket, setOtpTicket] = useState("");
   const [otpHint, setOtpHint] = useState("");
   const [otpCode, setOtpCode] = useState("");
+
+  // 初始密码账号：登录成功后强制改密（改密会吊销令牌，完成后回到登录表单）
+  const [forceChange, setForceChange] = useState(false);
 
   const [registerOpen, setRegisterOpen] = useState(false);
   const [forgotOpen, setForgotOpen] = useState(false);
@@ -57,6 +61,10 @@ export function LoginPage() {
         return;
       }
       finishLogin(result, username.trim());
+      if (result.password_reset_required) {
+        setForceChange(true);
+        return;
+      }
       navigate("/student");
     } catch (error) {
       setMessage(errorMessage(error, "学号或密码错误"));
@@ -76,6 +84,10 @@ export function LoginPage() {
     try {
       const result = await verifyOtpCode(otpTicket, otpCode.trim());
       finishLogin(result, username.trim());
+      if (result.password_reset_required) {
+        setForceChange(true);
+        return;
+      }
       navigate("/student");
     } catch (error) {
       setMessage(errorMessage(error, "验证码错误或已过期"));
@@ -193,6 +205,18 @@ export function LoginPage() {
         onRegistered={(studentId) => setUsername(studentId)}
       />
       <ForgotPasswordDialog open={forgotOpen} onOpenChange={setForgotOpen} />
+      <ForceChangePasswordDialog
+        open={forceChange}
+        userType="student"
+        oldPassword={password}
+        onChanged={() => {
+          // 改密已吊销刚签发的令牌：清空登录态与表单，重新走完整登录
+          setForceChange(false);
+          setPassword("");
+          backToPassword();
+          void logout();
+        }}
+      />
     </div>
   );
 }

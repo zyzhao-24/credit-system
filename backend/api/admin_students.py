@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import secrets
 from datetime import datetime
 
 from flask import Blueprint, g, jsonify, request
@@ -11,7 +12,7 @@ from backend.extensions import db
 from backend.models import Student
 from backend.services.exporters import xlsx_file_response
 from backend.services.legacy_import import DATETIME_FORMAT
-from backend.services.otp_service import clear_totp, has_totp
+from backend.services.otp_service import clear_totp, has_totp, revoke_trusted_devices
 from backend.services.ranking import format_datetime
 from backend.services.students import PHONE_PATTERN, create_student, delete_student_account
 from backend.utils.passwords import client_password_digest, hash_password_digest
@@ -28,6 +29,9 @@ def _apply_password(student: Student, password: str | None = None, password_hash
     digest = password_hash or client_password_digest(password or "")
     student.password_hash = hash_password_digest(digest)
     student.password_reset_required = False
+    # 管理员重置密码后：该学生旧令牌与"免 OTP"信任记录全部失效
+    student.token_version = (student.token_version or 0) + 1
+    revoke_trusted_devices(student)
 
 
 @admin_students_bp.route("/api/admin/students", methods=["GET", "POST", "PUT", "DELETE"])
@@ -67,7 +71,7 @@ def manage_students():
     if request.method == "POST":
         student_id = data.get("student_id", "").strip()
         name = data.get("name", "").strip()
-        password = data.get("password", "123456")
+        password = data.get("password", "").strip()
         password_digest = data.get("password_hash", "").strip().lower()
 
         if not student_id.isdigit():
@@ -77,18 +81,31 @@ def manage_students():
         if db.session.get(Student, student_id):
             return _error("学号已存在")
 
+        # 未指定密码时生成随机初始密码（仅本次响应可见），并要求首次登录改密
+        initial_password = ""
+        if not password and not password_digest:
+            password = secrets.token_urlsafe(9)
+            initial_password = password
+
         try:
-            create_student(
+            student = create_student(
                 student_id,
                 name,
                 password_digest or password,
                 password_is_digest=bool(password_digest),
             )
+            if initial_password:
+                student.password_reset_required = True
             db.session.commit()
         except Exception:
             db.session.rollback()
             raise
-        return jsonify({"success": True, "message": "已添加学生"})
+        message = "已添加学生"
+        if initial_password:
+            message = "已添加学生，初始密码仅显示一次"
+        return jsonify(
+            {"success": True, "message": message, "initial_password": initial_password}
+        )
 
     if request.method == "PUT":
         student_id = data.get("student_id", "")
@@ -121,6 +138,8 @@ def batch_students():
     added = 0
     updated = 0
     errors: list[str] = []
+    # 未填第三列密码的新学生：每人一个随机初始密码，仅本次响应可见
+    generated_passwords: list[dict[str, str]] = []
 
     try:
         for line_number, raw_line in enumerate(csv_data.strip().splitlines(), 1):
@@ -148,15 +167,31 @@ def batch_students():
                 if explicit_password:
                     _apply_password(student, explicit_password)
                 updated += 1
+            elif explicit_password:
+                create_student(student_id, name, explicit_password)
+                added += 1
             else:
-                create_student(student_id, name, explicit_password or "123456")
+                random_password = secrets.token_urlsafe(9)
+                new_student = create_student(student_id, name, random_password)
+                new_student.password_reset_required = True
+                generated_passwords.append(
+                    {"student_id": student_id, "name": name, "password": random_password}
+                )
                 added += 1
         db.session.commit()
     except Exception as exc:
         db.session.rollback()
         return _error(f"解析失败: {exc}")
 
-    return jsonify({"success": True, "added": added, "updated": updated, "errors": errors})
+    return jsonify(
+        {
+            "success": True,
+            "added": added,
+            "updated": updated,
+            "errors": errors,
+            "generated_passwords": generated_passwords,
+        }
+    )
 
 
 @admin_students_bp.post("/api/admin/change_student_password")

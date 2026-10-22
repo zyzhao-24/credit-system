@@ -572,7 +572,7 @@ function AddAdminDialog({
   onCreated: (bundle: AdminOtpBundle | null) => void;
 }) {
   const [adminId, setAdminId] = useState("");
-  const [password, setPassword] = useState("admin123");
+  const [password, setPassword] = useState("");
   const [department, setDepartment] = useState("");
 
   const submit = async () => {
@@ -581,20 +581,29 @@ function AddAdminDialog({
       return;
     }
     try {
-      const result = await createAdmin({
+      const payload: { admin_id: string; password?: string; role: string; department: string } = {
         admin_id: adminId.trim(),
-        password,
         role: "admin",
         department,
-      });
+      };
+      if (password) payload.password = password;
+      const result = await createAdmin(payload);
       if (result.success) {
         const bundle =
           result.otp_secret && result.otp_uri && result.otp_qr
-            ? { otp_secret: result.otp_secret, otp_uri: result.otp_uri, otp_qr: result.otp_qr }
+            ? {
+                otp_secret: result.otp_secret,
+                otp_uri: result.otp_uri,
+                otp_qr: result.otp_qr,
+                // 未指定密码时服务端生成的随机初始密码（仅本次响应可见）
+                ...(result.initial_password
+                  ? { initial_password: result.initial_password }
+                  : {}),
+              }
             : null;
         onOpenChange(false);
         setAdminId("");
-        setPassword("admin123");
+        setPassword("");
         setDepartment("");
         // 创建即绑定 OTP：随后弹出一次性二维码对话框
         onCreated(bundle);
@@ -612,8 +621,13 @@ function AddAdminDialog({
         <Field label="账号" required>
           <Input value={adminId} onChange={(e) => setAdminId(e.target.value)} />
         </Field>
-        <Field label="密码">
-          <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+        <Field label="密码（留空则随机生成）">
+          <Input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="留空自动生成随机初始密码"
+          />
         </Field>
         <Field label="部门">
           <Select value={department} onChange={(e) => setDepartment(e.target.value)}>

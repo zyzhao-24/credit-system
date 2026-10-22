@@ -40,8 +40,8 @@ def has_totp(account: Student | Admin) -> bool:
     return bool(get_totp_secret(account))
 
 
-def _revoke_trusted_devices(account: Student | Admin) -> None:
-    """OTP 变更（重置/重绑/清除）后，该账号旧的"免 OTP"信任记录立即失效。
+def revoke_trusted_devices(account: Student | Admin) -> None:
+    """OTP/密码变更（重置/重绑/改密）后，该账号旧的"免 OTP"信任记录立即失效。
 
     否则信任期内的 IP/设备只凭密码就能静默登录，重置 OTP 等于没有重置。
     由调用方统一提交事务。
@@ -56,13 +56,13 @@ def set_totp_secret(account: Student | Admin, secret: str) -> None:
     account.totp_secret_encrypted = encrypt_secret(
         secret, current_app.config["SECRET_KEY"]
     )
-    _revoke_trusted_devices(account)
+    revoke_trusted_devices(account)
 
 
 def clear_totp(account: Student | Admin) -> None:
     """Mark OTP as unbound; the next login/reset flow re-provisions it."""
     account.totp_secret_encrypted = ""
-    _revoke_trusted_devices(account)
+    revoke_trusted_devices(account)
 
 
 def check_totp(account: Student | Admin, code: str) -> bool:

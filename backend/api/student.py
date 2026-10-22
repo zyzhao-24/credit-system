@@ -11,7 +11,7 @@ from backend.extensions import db
 from backend.models import Activity, Category, Student
 from backend.services.credits import calculate_student_credits
 from backend.services.legacy_import import DATETIME_FORMAT
-from backend.services.otp_service import begin_pending_otp, pending_otp_bundle
+from backend.services.otp_service import begin_pending_otp, pending_otp_bundle, revoke_trusted_devices
 from backend.services.students import PHONE_PATTERN
 from backend.utils.passwords import client_password_digest, hash_password_digest, verify_password_digest
 
@@ -58,9 +58,14 @@ def change_password():
         return _error("原密码错误")
     if not new_password and not new_digest:
         return _error("新密码不能为空")
+    if new_password and len(new_password) < 6:
+        return _error("新密码至少需要6位字符")
 
     student.password_hash = hash_password_digest(new_digest or client_password_digest(new_password))
     student.password_reset_required = False
+    # 改密后旧令牌与"免 OTP"信任记录全部失效，前端按原流程要求重新登录
+    student.token_version = (student.token_version or 0) + 1
+    revoke_trusted_devices(student)
     db.session.commit()
     return jsonify({"success": True, "message": "密码修改成功"})
 

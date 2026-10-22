@@ -48,8 +48,14 @@ def _ensure_schema(app: Flask) -> None:
                 "wechat VARCHAR(100) NOT NULL DEFAULT ''",
                 "suggestion TEXT NOT NULL DEFAULT ''",
                 "info_updated_at DATETIME",
+                # 令牌版本：改密/重置/登出时 +1，旧 JWT 立即失效
+                "token_version INTEGER NOT NULL DEFAULT 0",
             ],
-            "admins": ["totp_secret_encrypted TEXT NOT NULL DEFAULT ''"],
+            "admins": [
+                "totp_secret_encrypted TEXT NOT NULL DEFAULT ''",
+                "password_reset_required BOOLEAN NOT NULL DEFAULT 0",
+                "token_version INTEGER NOT NULL DEFAULT 0",
+            ],
             # 提交时保存问卷快照 + 版本号，模板修改不影响历史提交
             "questionnaire_responses": [
                 "template_snapshot JSON",
@@ -169,6 +175,31 @@ def _ensure_system_admin(app: Flask) -> None:
             db.session.commit()
 
 
+def _install_security_headers(app: Flask, csp: str) -> None:
+    """统一补安全响应头（L-1）。
+
+    HSTS 在纯 HTTP 的 localhost 上会被浏览器忽略，在 LAN HTTPS 上生效。
+    """
+
+    @app.after_request
+    def security_headers(response):
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "same-origin")
+        response.headers.setdefault("Strict-Transport-Security", "max-age=15552000")
+        response.headers.setdefault("Content-Security-Policy", csp)
+        return response
+
+
+# 主应用是 Vite 构建的 SPA：脚本/样式/字体全部同源，图片允许 data:（内嵌二维码等）
+_SPA_CSP = (
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data:; connect-src 'self'; font-src 'self'"
+)
+# 本机维护台是手写的内联样式页面，无脚本
+_CONSOLE_CSP = "default-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:"
+
+
 def create_app(
     config_object: type[Config] | None = None,
     maintenance_only: bool = False,
@@ -202,6 +233,7 @@ def create_app(
 
     if maintenance_only:
         app.register_blueprint(local_admin_bp)
+        _install_security_headers(app, _CONSOLE_CSP)
         _ensure_schema(app)
         _ensure_system_admin(app)
 
@@ -233,6 +265,7 @@ def create_app(
     app.register_blueprint(questionnaires_bp)
     app.register_blueprint(student_bp)
 
+    _install_security_headers(app, _SPA_CSP)
     _ensure_schema(app)
     _ensure_system_admin(app)
 

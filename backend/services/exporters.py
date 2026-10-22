@@ -49,12 +49,14 @@ def xlsx_file_response(
     workbook = openpyxl.Workbook()
     worksheet = workbook.active
     worksheet.title = sheet_title
-    worksheet.append(["" if value is None else str(value) for value in header])
+    # 与 CSV 一样做公式前缀中和：openpyxl 会把以 = 开头的字符串写成公式单元格，
+    # 学生自填内容（建议/微信号/问卷答案）可能携带 WEBSERVICE/DDE 等载荷
+    worksheet.append([safe_csv_value(value) for value in header])
     for cell in worksheet[1]:
         cell.font = Font(bold=True)
         cell.alignment = Alignment(horizontal="center")
     for row in rows:
-        worksheet.append(["" if value is None else str(value) for value in row])
+        worksheet.append([safe_csv_value(value) for value in row])
 
     output = io.BytesIO()
     workbook.save(output)

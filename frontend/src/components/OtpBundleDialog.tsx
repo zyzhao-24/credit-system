@@ -111,6 +111,14 @@ function OtpBundleBody({
       <p className="text-[13px] text-danger -mt-2 mb-3 leading-relaxed">
         ⚠️ 此二维码与密钥仅显示这一次，请立即用验证器应用扫码绑定，或抄写密钥妥善保存。
       </p>
+      {bundle.initial_password ? (
+        <div className="mb-3 rounded-md border border-danger/30 bg-danger/5 px-3 py-2">
+          <p className="text-[13px] text-danger mb-2 leading-relaxed">
+            该账号使用系统生成的随机初始密码（同样仅显示这一次），首次登录需用它登录并修改密码：
+          </p>
+          <Input value={bundle.initial_password} readOnly className="font-mono bg-white" />
+        </div>
+      ) : null}
       <div className="flex justify-center mb-3">
         <img
           src={bundle.otp_qr}

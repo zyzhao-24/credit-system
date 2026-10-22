@@ -10,6 +10,8 @@ class Student(db.Model):
     name = db.Column(db.String(100), nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
     password_reset_required = db.Column(db.Boolean, nullable=False, default=False)
+    # 令牌版本：改密/重置/登出时 +1，使此前签发的 JWT 全部失效
+    token_version = db.Column(db.Integer, nullable=False, default=0)
     totp_secret_encrypted = db.Column(db.Text, nullable=False, default="")
     # 报名信息是学生档案的一部分，不再是独立问卷
     phone = db.Column(db.String(20), nullable=False, default="")
@@ -29,6 +31,8 @@ class Admin(db.Model):
     password_hash = db.Column(db.String(255), nullable=False)
     role = db.Column(db.String(20), nullable=False, default="admin")
     department = db.Column(db.String(100), nullable=False, default="")
+    password_reset_required = db.Column(db.Boolean, nullable=False, default=False)
+    token_version = db.Column(db.Integer, nullable=False, default=0)
     totp_secret_encrypted = db.Column(db.Text, nullable=False, default="")
 
     __table_args__ = (

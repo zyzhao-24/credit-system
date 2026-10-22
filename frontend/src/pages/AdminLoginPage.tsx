@@ -9,12 +9,13 @@ import { sha256Hex } from "@/lib/sha256";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Field } from "@/components/common";
+import { ForceChangePasswordDialog } from "@/components/ForceChangePasswordDialog";
 
 const OTP_PATTERN = /^\d{6}$/;
 
 /** 管理员登录页（固定路径 /admin/login，替代 legacy 随机路径；密码 + 动态验证码两步）。 */
 export function AdminLoginPage() {
-  const { finishLogin } = useAuth();
+  const { finishLogin, logout } = useAuth();
   const navigate = useNavigate();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -24,6 +25,9 @@ export function AdminLoginPage() {
   // 第二步：OTP 验证码（otpTicket 非空时切换到验证码表单）
   const [otpTicket, setOtpTicket] = useState("");
   const [otpCode, setOtpCode] = useState("");
+
+  // 初始密码账号：登录成功后强制改密（改密会吊销令牌，完成后回到登录表单）
+  const [forceChange, setForceChange] = useState(false);
 
   const handleLogin = async (event: FormEvent) => {
     event.preventDefault();
@@ -38,6 +42,10 @@ export function AdminLoginPage() {
         return;
       }
       finishLogin(result, username.trim());
+      if (result.password_reset_required) {
+        setForceChange(true);
+        return;
+      }
       navigate("/admin");
     } catch (error) {
       setMessage(errorMessage(error, "账号或密码错误"));
@@ -57,6 +65,10 @@ export function AdminLoginPage() {
     try {
       const result = await verifyOtpCode(otpTicket, otpCode.trim());
       finishLogin(result, username.trim());
+      if (result.password_reset_required) {
+        setForceChange(true);
+        return;
+      }
       navigate("/admin");
     } catch (error) {
       setMessage(errorMessage(error, "验证码错误或已过期"));
@@ -156,6 +168,18 @@ export function AdminLoginPage() {
           </p>
         ) : null}
       </div>
+      <ForceChangePasswordDialog
+        open={forceChange}
+        userType="admin"
+        oldPassword={password}
+        onChanged={() => {
+          // 改密已吊销刚签发的令牌：清空登录态与表单，重新走完整登录
+          setForceChange(false);
+          setPassword("");
+          backToPassword();
+          void logout();
+        }}
+      />
     </div>
   );
 }

@@ -4,8 +4,10 @@ Login is a mandatory two-step flow: password first, TOTP code second.
 Step 1 returns a short-lived otp_ticket (10 minutes) which step 2 exchanges
 for the real access token.
 
-OTP 验证成功后，账号会信任当时的来源 IP 与一枚设备 Cookie（HttpOnly），
-一周内同一 IP 或同一设备浏览器再次登录时第一步直接发令牌，不再索要 OTP。
+OTP 验证成功后，账号会信任当时的设备浏览器（HttpOnly Cookie），信任期内
+同一设备再次登录时第一步直接发令牌，不再索要 OTP。生产部署中所有请求都
+经 tls_proxy 字节转发，应用看到的 remote_addr 恒为回环地址，因此回环
+地址一律不作为信任锚点（否则任何来源都能冒用"同 IP"信任）。
 """
 
 from __future__ import annotations
@@ -34,6 +36,7 @@ from backend.services.otp_service import (
     decode_pending_otp,
     has_totp,
     pending_otp_bundle,
+    revoke_trusted_devices,
     send_totp_binding_email,
     set_totp_secret,
     student_email_address,
@@ -54,9 +57,54 @@ _reset_attempts: dict[str, list[float]] = {}
 _reset_lock = threading.Lock()
 
 OTP_TICKET_SECONDS = 600
-# OTP 信任期：验证成功后一周内同 IP / 同设备免 OTP
-TRUSTED_DEVICE_DAYS = 7
+# OTP 信任期：验证成功后 3 天内同设备浏览器免 OTP
+TRUSTED_DEVICE_DAYS = 3
 TRUSTED_DEVICE_COOKIE = "trusted_device"
+# 回环地址不可作为信任锚点：生产部署中 tls_proxy 转发后 remote_addr
+# 恒为回环，信任它等于信任所有来源
+_UNTRUSTABLE_IPS = frozenset({"127.0.0.1", "::1"})
+
+# ---- 登录/动态码防爆破限速（按账号计失败次数；生产 remote_addr 恒为回环，
+# ---- 不能按 IP 限速，否则一个攻击者会锁死全部用户） ----
+_login_failures: dict[str, list[float]] = {}
+_login_lock = threading.Lock()
+_otp_failures: dict[str, list[float]] = {}
+_otp_ticket_failures: dict[str, int] = {}
+_otp_lock = threading.Lock()
+
+
+def _limit_config(name: str, default: int) -> int:
+    return int(current_app.config.get(name, default))
+
+
+def _login_rate_limited(key: str) -> bool:
+    """该账号当前是否处于密码失败限速期（只读判断，不计数）。"""
+    now = time.time()
+    with _login_lock:
+        stamps = [item for item in _login_failures.get(key, []) if now - item < 3600]
+        _login_failures[key] = stamps
+        if sum(1 for item in stamps if now - item < 60) >= _limit_config(
+            "LOGIN_FAIL_MAX_PER_MINUTE", 5
+        ):
+            return True
+        return len(stamps) >= _limit_config("LOGIN_FAIL_MAX_PER_HOUR", 20)
+
+
+def _record_login_failure(key: str) -> None:
+    now = time.time()
+    with _login_lock:
+        stamps = [item for item in _login_failures.get(key, []) if now - item < 3600]
+        stamps.append(now)
+        _login_failures[key] = stamps
+
+
+def _clear_login_failures(key: str) -> None:
+    with _login_lock:
+        _login_failures.pop(key, None)
+
+
+def _too_many_requests(message: str = "尝试次数过多，请稍后再试"):
+    return jsonify({"detail": message}), 429, {"Retry-After": "60"}
 _VERIFY_CODE_TTL_MINUTES = 10
 _VERIFY_CODE_MAX_ATTEMPTS = 5
 _VERIFY_CODE_WINDOW_SECONDS = 600
@@ -101,6 +149,8 @@ def _identity_for(account: Student | Admin, user_type: str) -> dict[str, Any]:
             "name": account.name,
             "role": "",
             "department": "",
+            "tv": account.token_version,
+            "password_reset_required": bool(account.password_reset_required),
         }
     assert isinstance(account, Admin)
     return {
@@ -109,6 +159,8 @@ def _identity_for(account: Student | Admin, user_type: str) -> dict[str, Any]:
         "name": account.admin_id,
         "role": account.role,
         "department": account.department,
+        "tv": account.token_version,
+        "password_reset_required": bool(account.password_reset_required),
     }
 
 
@@ -135,6 +187,7 @@ def _token_payload(identity: dict[str, Any]) -> dict[str, Any]:
         "role": identity.get("role", ""),
         "department": identity.get("department", ""),
         "name": identity.get("name", ""),
+        "password_reset_required": bool(identity.get("password_reset_required", False)),
     }
 
 
@@ -147,9 +200,10 @@ def _device_token_hash(token: str) -> str:
 
 
 def _trusted_login(account: Student | Admin, user_type: str) -> bool:
-    """该账号在当前 IP 或当前设备浏览器上是否处于 OTP 信任期内。
+    """该账号在当前设备浏览器或可信来源 IP 上是否处于 OTP 信任期内。
 
-    顺带惰性清理该账号已过期的信任记录。
+    顺带惰性清理该账号已过期的信任记录。回环地址（代理转发后的视角）
+    永不作为信任锚点，否则信任记录会放大为"任何来源免 OTP"。
     """
     now = datetime.now()
     rows = TrustedDevice.query.filter_by(
@@ -169,6 +223,8 @@ def _trusted_login(account: Student | Admin, user_type: str) -> bool:
         if any(row.token_hash == token_hash for row in active):
             return True
     remote_ip = request.remote_addr or ""
+    if remote_ip in _UNTRUSTABLE_IPS:
+        return False
     return bool(remote_ip) and any(row.ip == remote_ip for row in active)
 
 
@@ -176,12 +232,13 @@ def _remember_trusted_device(account: Student | Admin, user_type: str) -> str:
     """OTP 验证成功后调用：写入信任记录，返回要发给浏览器的设备令牌。"""
     token = secrets.token_urlsafe(32)
     now = datetime.now()
+    remote_ip = request.remote_addr or ""
     db.session.add(
         TrustedDevice(
             user_type=user_type,
             account_id=_account_id_of(account),
             token_hash=_device_token_hash(token),
-            ip=request.remote_addr or "",
+            ip="" if remote_ip in _UNTRUSTABLE_IPS else remote_ip,
             created_at=now,
             expires_at=now + timedelta(days=TRUSTED_DEVICE_DAYS),
         )
@@ -254,14 +311,20 @@ def oauth2_token():
     if user_type is None:
         return jsonify({"detail": "无效的用户类型"}), 400
 
+    rate_key = f"{user_type}:{username}"
+    if _login_rate_limited(rate_key):
+        return _too_many_requests()
+
     try:
         account = _check_password(user_type, username, password_digest)
     except Exception:
         db.session.rollback()
         raise
     if account is None:
+        _record_login_failure(rate_key)
         return jsonify({"detail": "账号或密码错误"}), 401
-    # 一周内验证过 OTP 的 IP / 设备：直接发令牌，不再索要 OTP
+    _clear_login_failures(rate_key)
+    # 信任期内验证过 OTP 的设备：直接发令牌，不再索要 OTP
     if _trusted_login(account, user_type):
         identity = _identity_for(account, user_type)
         return jsonify({"success": True, **_token_payload(identity)})
@@ -285,9 +348,37 @@ def oauth2_token_verify():
         return _json_error("无效的验证票据", 401)
 
     user_type = claims.get("user_type", "")
-    account = _load_account(user_type, claims.get("sub", ""))
+    account_id = claims.get("sub", "")
+    account = _load_account(user_type, account_id)
+
+    # 防爆破：同一票据失败达到上限即作废；同一账号失败频率过高返回 429
+    ticket_key = _device_token_hash(ticket)
+    account_key = f"{user_type}:{account_id}"
+    now = time.time()
+    with _otp_lock:
+        if _otp_ticket_failures.get(ticket_key, 0) >= _limit_config(
+            "OTP_FAIL_MAX_PER_TICKET", 5
+        ):
+            ticket_dead = True
+        else:
+            ticket_dead = False
+        stamps = [item for item in _otp_failures.get(account_key, []) if now - item < 60]
+        _otp_failures[account_key] = stamps
+        account_limited = len(stamps) >= _limit_config("OTP_FAIL_MAX_PER_MINUTE", 10)
+    if ticket_dead:
+        return _json_error("验证码错误次数过多，请重新登录", 401)
+    if account_limited:
+        return _too_many_requests("验证码尝试过于频繁，请稍后再试")
+
     if account is None or not check_totp(account, code):
+        with _otp_lock:
+            _otp_ticket_failures[ticket_key] = _otp_ticket_failures.get(ticket_key, 0) + 1
+            _otp_failures.setdefault(account_key, []).append(now)
         return _json_error("验证码错误，请重新输入")
+
+    with _otp_lock:
+        _otp_ticket_failures.pop(ticket_key, None)
+        _otp_failures.pop(account_key, None)
 
     try:
         identity = _identity_for(account, user_type)
@@ -296,13 +387,14 @@ def oauth2_token_verify():
         db.session.rollback()
         raise
     response = jsonify({"success": True, **_token_payload(identity)})
-    # 设备令牌：一周内该设备浏览器（或同 IP）登录免 OTP；HttpOnly 防 JS 读取
+    # 设备令牌：信任期内该设备浏览器登录免 OTP；HttpOnly 防 JS 读取，Secure 仅加密传输
     response.set_cookie(
         TRUSTED_DEVICE_COOKIE,
         device_token,
         max_age=TRUSTED_DEVICE_DAYS * 86400,
         httponly=True,
         samesite="Lax",
+        secure=True,
     )
     return response
 
@@ -311,9 +403,14 @@ def _legacy_login(user_type: str):
     data = request.get_json(silent=True) or {}
     username = data.get("username", "").strip()
     password_digest = data.get("password_hash", "").strip().lower()
+    rate_key = f"{user_type}:{username}"
+    if _login_rate_limited(rate_key):
+        return _too_many_requests()
     account = _check_password(user_type, username, password_digest)
     if account is None:
+        _record_login_failure(rate_key)
         return _json_error("学号或密码错误" if user_type == "student" else "账号或密码错误")
+    _clear_login_failures(rate_key)
     if _trusted_login(account, user_type):
         identity = _identity_for(account, user_type)
         return jsonify({"success": True, **_token_payload(identity)})
@@ -339,7 +436,13 @@ def auth_me():
 
 @auth_bp.post("/api/auth/logout")
 @auth_bp.post("/api/logout")
+@require_auth
 def auth_logout():
+    """服务端登出：令牌版本 +1，该账号此前签发的所有访问令牌立即失效。"""
+    account = getattr(g, "current_account", None)
+    if account is not None:
+        account.token_version = (account.token_version or 0) + 1
+        db.session.commit()
     return jsonify({"success": True})
 
 
@@ -625,6 +728,9 @@ def forgot_password():
             password_digest or client_password_digest(new_password)
         )
         student.password_reset_required = False
+        # 找回密码后：旧令牌与"免 OTP"信任记录全部作废
+        student.token_version = (student.token_version or 0) + 1
+        revoke_trusted_devices(student)
         db.session.commit()
     except Exception:
         db.session.rollback()
