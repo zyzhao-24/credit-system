@@ -1,5 +1,7 @@
 """Authentication API tests (password + mandatory TOTP two-step)."""
 
+import json
+
 import pyotp
 
 from backend.models import Admin, Student
@@ -76,13 +78,12 @@ def test_admin_two_step_and_legacy_login(app, database, seed_legacy_payload, min
     assert info.get_json()["role"] == "system_admin"
 
     # legacy 登录端点同样进入 OTP 步骤而不是直接放行
-    # （先通过 login fixture 为普通管理员绑定 OTP；换一个未信任的 IP 发起，
-    #  否则该账号在 127.0.0.1 上处于一周信任期会直接发令牌）
+    # （先通过 login fixture 为普通管理员绑定 OTP；换一个新的客户端——无信任
+    #  Cookie——否则该账号在信任期内会直接发令牌）
     login("admin", "adminpass", "admin")
     legacy = client.post(
         "/api/login/admin",
         json={"username": "admin", "password_hash": client_password_digest("adminpass")},
-        environ_overrides={"REMOTE_ADDR": "203.0.113.9"},
     )
     assert legacy.status_code == 200
     assert legacy.get_json()["otp_required"] is True
@@ -414,8 +415,8 @@ def test_trusted_device_skips_otp_for_a_week(app, database, seed_legacy_payload,
     assert TrustedDevice.query.filter_by(user_type="student", account_id="1001").count() == 0
 
 
-def test_real_remote_ip_still_trusted(app, database, seed_legacy_payload, minimal_payload):
-    """非回环的真实来源 IP 仍享有 IP 信任（开发/直连部署形态）。"""
+def test_trust_is_cookie_only_never_ip(app, database, seed_legacy_payload, minimal_payload):
+    """A5：信任锚点只有设备 Cookie——同一真实 IP 无 Cookie 也必须重新过 OTP。"""
     seed_legacy_payload(minimal_payload)
     client = app.test_client()
     remote = {"REMOTE_ADDR": "203.0.113.7"}
@@ -438,7 +439,20 @@ def test_real_remote_ip_still_trusted(app, database, seed_legacy_payload, minima
     )
     assert step2.get_json()["success"] is True
 
-    # 无 Cookie 但同一真实 IP：免 OTP
+    # 带设备 Cookie（同 IP）：免 OTP
+    with_cookie = client.post(
+        "/api/auth/token",
+        data={
+            "grant_type": "password",
+            "username": "1001",
+            "password": client_password_digest("pass123"),
+            "user_type": "student",
+        },
+        environ_overrides=remote,
+    )
+    assert with_cookie.get_json().get("access_token")
+
+    # 无 Cookie 但同一真实 IP：仍必须过 OTP（IP 永不参与信任）
     other_browser = app.test_client()
     same_ip = other_browser.post(
         "/api/auth/token",
@@ -450,20 +464,8 @@ def test_real_remote_ip_still_trusted(app, database, seed_legacy_payload, minima
         },
         environ_overrides=remote,
     )
-    assert same_ip.get_json().get("access_token")
-
-    # 换一个 IP：必须重新过 OTP
-    other_ip = other_browser.post(
-        "/api/auth/token",
-        data={
-            "grant_type": "password",
-            "username": "1001",
-            "password": client_password_digest("pass123"),
-            "user_type": "student",
-        },
-        environ_overrides={"REMOTE_ADDR": "203.0.113.8"},
-    )
-    assert other_ip.get_json()["otp_required"] is True
+    assert same_ip.get_json()["otp_required"] is True
+    assert not same_ip.get_json().get("access_token")
 
 
 def test_otp_reset_revokes_trusted_login(
@@ -525,7 +527,7 @@ def _seed_raw_app(raw_app, payload):
 
 
 def test_password_failures_are_rate_limited(raw_app, minimal_payload):
-    """默认阈值下，同一账号连续密码失败会被限速（429 + Retry-After）。"""
+    """默认阈值下，同一账号连续密码失败会被硬限速（429 + Retry-After）。"""
     _seed_raw_app(raw_app, minimal_payload)
     client = raw_app.test_client()
 
@@ -547,24 +549,45 @@ def test_password_failures_are_rate_limited(raw_app, minimal_payload):
         assert response.status_code == 401
     assert got_429, "连续密码失败未触发限速"
 
-    # 软限速：限速期内正确密码仍然放行（攻击者无法把正常用户锁在门外）
-    allowed = _step1(client, "1002", "pass456", "student")
-    assert allowed.status_code == 200
-    assert allowed.get_json().get("otp_required") is True
+    # 硬限速：限速期内同一 IP 连正确密码也一律 429（判断在校验之前）
+    blocked = _step1(client, "1002", "pass456", "student")
+    assert blocked.status_code == 429
+
+    # 换一个来源 IP（限速键含 IP）：不受影响，正常进入 OTP 步骤
+    other_ip = raw_app.test_client().post(
+        "/api/auth/token",
+        data={
+            "grant_type": "password",
+            "username": "1002",
+            "password": client_password_digest("pass456"),
+            "user_type": "student",
+        },
+        environ_overrides={"REMOTE_ADDR": "203.0.113.42"},
+    )
+    assert other_ip.status_code == 200
+    assert other_ip.get_json().get("otp_required") is True
 
 
 def test_otp_ticket_locked_after_repeated_failures(raw_app, minimal_payload):
     """同一 otp_ticket 连续输错达到上限即作废，之后正确验证码也不再接受。"""
-    _seed_raw_app(raw_app, minimal_payload)
+    # 专用账号：otp_ticket 签发/失败计数是进程级共享桶，其他用例登录过的
+    # 学号在默认 3 张/分的签发限速下可能一进来就 429
+    payload = json.loads(json.dumps(minimal_payload))
+    payload["students"] = {
+        "1088": {"name": "锁票专用", "password": "lockpass1", "password_reset_required": False}
+    }
+    payload["registration_questionnaires"] = {}
+    _seed_raw_app(raw_app, payload)
     client = raw_app.test_client()
 
-    # 与限速用例错开账号：1002 的失败计数会影响 1002 的登录限速判断
-    step1 = _step1(client, "1001", "pass123", "student")
+    step1 = _step1(client, "1088", "lockpass1", "student")
     ticket = step1.get_json()["otp_ticket"]
     with raw_app.app_context():
         from backend.extensions import db
 
-        secret = get_totp_secret(db.session.get(Student, "1001"))
+        student = db.session.get(Student, "1088")
+        assert student is not None
+        secret = get_totp_secret(student)
 
     for _ in range(5):
         wrong = client.post(
@@ -692,3 +715,53 @@ def test_otp_ticket_is_not_an_access_token(app, database, seed_legacy_payload, m
     assert client.get("/api/auth/me", headers=headers).status_code == 401
     assert client.get("/api/student/profile", headers=headers).status_code == 401
     assert client.get("/api/student/my_credits", headers=headers).status_code == 401
+
+
+def test_unknown_account_runs_dummy_password_verify(raw_app, minimal_payload, monkeypatch):
+    """A3：不存在的账号也执行一次等价 PBKDF2，消除账号枚举的计时侧信道。"""
+    import backend.api.auth as auth_module
+
+    _seed_raw_app(raw_app, minimal_payload)
+    calls = []
+    real_verify = auth_module.verify_password_digest
+
+    def counting_verify(stored_hash, digest):
+        calls.append(stored_hash)
+        return real_verify(stored_hash, digest)
+
+    monkeypatch.setattr(auth_module, "verify_password_digest", counting_verify)
+    client = raw_app.test_client()
+
+    ghost = _step1(client, "99999", "whatever1", "student")
+    assert ghost.status_code == 401
+    assert len(calls) == 1  # dummy 哈希同样走了一次完整 PBKDF2 校验
+
+    real = _step1(client, "1001", "wrong-password", "student")
+    assert real.status_code == 401
+    assert len(calls) == 2
+
+
+def test_otp_ticket_issue_is_rate_limited(raw_app, minimal_payload):
+    """A4：otp_ticket 签发限速（正确密码也计数），防"取票→试 N 次→再取票"循环。"""
+    # 专用账号：_ticket_issues 是进程级共享桶，不能用其他用例登录过的学号
+    payload = json.loads(json.dumps(minimal_payload))
+    payload["students"] = {
+        "1099": {"name": "限速专用", "password": "ticketpass1", "password_reset_required": False}
+    }
+    payload["registration_questionnaires"] = {}
+    _seed_raw_app(raw_app, payload)
+    client = raw_app.test_client()
+
+    issued = 0
+    limited = None
+    for _ in range(5):
+        response = _step1(client, "1099", "ticketpass1", "student")
+        if response.status_code == 429:
+            limited = response
+            break
+        assert response.status_code == 200
+        assert response.get_json().get("otp_ticket")
+        issued += 1
+    assert limited is not None, "otp_ticket 签发未触发限速"
+    assert issued == 3  # OTP_TICKET_MAX_PER_MINUTE 默认 3
+    assert limited.headers.get("Retry-After")

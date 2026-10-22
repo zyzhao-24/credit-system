@@ -10,6 +10,7 @@ from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from backend.config import Config, ProductionConfig
 from backend.extensions import db, migrate
@@ -264,6 +265,12 @@ def create_app(
         app.register_blueprint(local_admin_bp)
     app.register_blueprint(questionnaires_bp)
     app.register_blueprint(student_bp)
+
+    # 主应用只被 tls_proxy（回环）访问：tls_proxy 会把 X-Forwarded-For 覆盖为
+    # 真实客户端地址（伪造值在代理层剥除），ProxyFix 据此恢复 remote_addr，
+    # 登录限速与审计日志才能按真实客户端分桶。维护台（5002）不经过代理，
+    # 绝不能套用 ProxyFix（否则本机任何人都能伪造来源绕过本机校验）。
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1)
 
     _install_security_headers(app, _SPA_CSP)
     _ensure_schema(app)

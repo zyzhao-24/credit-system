@@ -40,8 +40,13 @@ def app(tmp_path):
         # 限速本身由 test_auth.py 里使用 raw_app 的专项用例覆盖
         LOGIN_FAIL_MAX_PER_MINUTE=1000,
         LOGIN_FAIL_MAX_PER_HOUR=100000,
+        LOGIN_IP_FAIL_MAX_PER_MINUTE=100000,
+        LOGIN_IP_FAIL_MAX_PER_HOUR=1000000,
         OTP_FAIL_MAX_PER_TICKET=1000,
         OTP_FAIL_MAX_PER_MINUTE=10000,
+        OTP_TICKET_MAX_PER_MINUTE=10000,
+        # 全站失败桶延迟会拖慢测试，放宽到不会触发
+        LOGIN_GLOBAL_FAIL_PER_MINUTE=1000000,
     )
     with app.app_context():
         _db.create_all()

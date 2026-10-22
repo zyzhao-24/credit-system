@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import io
-
-import openpyxl
-from flask import Blueprint, g, jsonify, request, send_file
-from openpyxl.styles import Alignment, Font
+from flask import Blueprint, g, jsonify, request
 
 from backend.auth.decorators import require_admin, require_system_admin
 from backend.models import Activity, Category, Student
 from backend.services.credits import calculate_student_credits
+from backend.services.exporters import xlsx_file_response
 
 
 admin_reports_bp = Blueprint("admin_reports", __name__)
@@ -137,19 +134,15 @@ def admin_report():
 @require_system_admin
 def export_data():
     categories = Category.query.order_by(Category.position.asc()).all()
-    workbook = openpyxl.Workbook()
-    worksheet = workbook.active
-    worksheet.title = "学生学分统计"
 
     headers = ["学号", "姓名", "总学分", "总学分合格"]
     for category in categories:
         headers.extend([f"{category.name}学分", f"{category.name}合格"])
     headers.append("最终合格")
-    worksheet.append(headers)
-    for cell in worksheet[1]:
-        cell.font = Font(bold=True)
-        cell.alignment = Alignment(horizontal="center")
 
+    # 统一走 xlsx_file_response：学生姓名等自填字段的公式注入中和只在那里实现，
+    # 自建 workbook 会绕过它（B1）
+    rows = []
     for student in Student.query.order_by(Student.student_id.asc()).all():
         result = calculate_student_credits(student.student_id)
         row = [
@@ -162,14 +155,6 @@ def export_data():
             status = result["category_status"][category.name]
             row.extend([status["credits"], "是" if status["qualified"] else "否"])
         row.append("是" if result["final_qualified"] else "否")
-        worksheet.append(row)
+        rows.append(row)
 
-    output = io.BytesIO()
-    workbook.save(output)
-    output.seek(0)
-    return send_file(
-        output,
-        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        as_attachment=True,
-        download_name="学生学分统计.xlsx",
-    )
+    return xlsx_file_response("学生学分统计.xlsx", "学生学分统计", headers, rows)

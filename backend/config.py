@@ -49,6 +49,17 @@ class Config:
     LOGIN_FAIL_MAX_PER_HOUR = int(os.getenv("LOGIN_FAIL_MAX_PER_HOUR", "20"))
     OTP_FAIL_MAX_PER_TICKET = int(os.getenv("OTP_FAIL_MAX_PER_TICKET", "5"))
     OTP_FAIL_MAX_PER_MINUTE = int(os.getenv("OTP_FAIL_MAX_PER_MINUTE", "10"))
+    # 第二层：单 IP 全账号失败限速（防撞库扫号；判定在校验之前，见 api/auth.py）
+    LOGIN_IP_FAIL_MAX_PER_MINUTE = int(os.getenv("LOGIN_IP_FAIL_MAX_PER_MINUTE", "50"))
+    LOGIN_IP_FAIL_MAX_PER_HOUR = int(os.getenv("LOGIN_IP_FAIL_MAX_PER_HOUR", "300"))
+    # OTP 票据签发限速：正确密码每分钟最多领 3 张票，防"取票→试 N 次→再取票"循环
+    OTP_TICKET_MAX_PER_MINUTE = int(os.getenv("OTP_TICKET_MAX_PER_MINUTE", "3"))
+    # 第三层：全站失败桶——全站登录失败超阈值时对所有失败响应加延迟（不拒绝，
+    # 避免攻击者通过刷失败把站点打成 429 的 DoS）
+    LOGIN_GLOBAL_FAIL_PER_MINUTE = int(os.getenv("LOGIN_GLOBAL_FAIL_PER_MINUTE", "120"))
+    LOGIN_GLOBAL_FAIL_DELAY_SECONDS = float(os.getenv("LOGIN_GLOBAL_FAIL_DELAY_SECONDS", "2"))
+    # 限速字典键上限：防伪造大量不同来源撑爆内存（超限丢最旧的键）
+    RATE_LIMIT_MAX_KEYS = int(os.getenv("RATE_LIMIT_MAX_KEYS", "100000"))
     CORS_ORIGINS = [
         origin.strip()
         for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")

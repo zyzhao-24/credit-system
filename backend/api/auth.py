@@ -4,10 +4,10 @@ Login is a mandatory two-step flow: password first, TOTP code second.
 Step 1 returns a short-lived otp_ticket (10 minutes) which step 2 exchanges
 for the real access token.
 
-OTP 验证成功后，账号会信任当时的设备浏览器（HttpOnly Cookie），信任期内
-同一设备再次登录时第一步直接发令牌，不再索要 OTP。生产部署中所有请求都
-经 tls_proxy 字节转发，应用看到的 remote_addr 恒为回环地址，因此回环
-地址一律不作为信任锚点（否则任何来源都能冒用"同 IP"信任）。
+OTP 验证成功后，账号会信任当时的设备浏览器（HttpOnly+Secure Cookie），
+信任期内同一设备再次登录时第一步直接发令牌，不再索要 OTP。不按来源 IP
+信任：校园 NAT/VPN 下同出口 IP 的用户会互相"继承"免 OTP 状态，等同
+绕过动态验证码。
 """
 
 from __future__ import annotations
@@ -60,18 +60,18 @@ OTP_TICKET_SECONDS = 600
 # OTP 信任期：验证成功后 3 天内同设备浏览器免 OTP
 TRUSTED_DEVICE_DAYS = 3
 TRUSTED_DEVICE_COOKIE = "trusted_device"
-# 回环地址不可作为信任锚点：生产部署中 tls_proxy 转发后 remote_addr
-# 恒为回环，信任它等于信任所有来源
-_UNTRUSTABLE_IPS = frozenset({"127.0.0.1", "::1"})
 
-# ---- 登录/动态码防爆破限速（按账号计失败次数；生产 remote_addr 恒为回环，
-# ---- 不能按 IP 限速，否则一个攻击者会锁死全部用户） ----
-# 软限速原则：先验证凭据再判定限速，429 只发给"错误且超限"的尝试——
-# 正确密码/验证码永远放行，攻击者无法通过故意失败把正常用户锁在门外。
+# ---- 登录/动态码防爆破限速 ----
+# 键带真实客户端 IP（tls_proxy 覆盖写入 X-Forwarded-For + ProxyFix 恢复），
+# 硬限速在校验之前：超限直接 429，不再消耗 PBKDF2 算力；攻击者只会锁死
+# "自己 IP + 受害账号"这个组合，不影响其他来源的正常用户。
+# 全部计数字典有上限（RATE_LIMIT_MAX_KEYS 配置项），防止随机用户名撑大内存。
 _login_failures: dict[str, list[float]] = {}
 _login_lock = threading.Lock()
+_global_failures: list[float] = []
 _otp_failures: dict[str, list[float]] = {}
 _otp_ticket_failures: dict[str, int] = {}
+_ticket_issues: dict[str, list[float]] = {}
 _otp_lock = threading.Lock()
 
 
@@ -79,30 +79,80 @@ def _limit_config(name: str, default: int) -> int:
     return int(current_app.config.get(name, default))
 
 
-def _login_rate_limited(key: str) -> bool:
-    """该账号当前是否处于密码失败限速期（只读判断，不计数）。"""
+def _client_ip() -> str:
+    return request.remote_addr or "unknown"
+
+
+def _windowed(d: dict[str, list[float]], key: str, window: int, now: float) -> list[float]:
+    """取出 key 在时间窗内的记录并惰性清理过期项。"""
+    stamps = [item for item in d.get(key, []) if now - item < window]
+    if stamps:
+        d[key] = stamps
+    else:
+        d.pop(key, None)
+    return stamps
+
+
+def _bounded_set(d: dict, key: str, value) -> None:
+    """有界写入：达到上限时丢弃最旧的键（dict 保插入序），防止内存被撑大。"""
+    if key not in d and len(d) >= _limit_config("RATE_LIMIT_MAX_KEYS", 100_000):
+        oldest = next(iter(d), None)
+        if oldest is not None:
+            d.pop(oldest, None)
+    d[key] = value
+
+
+def _login_rate_limited(ip_key: str, acct_key: str) -> bool:
+    """硬限速（只读判断，不计数）：(IP+账号) 与 (IP) 两个维度。"""
     now = time.time()
     with _login_lock:
-        stamps = [item for item in _login_failures.get(key, []) if now - item < 3600]
-        _login_failures[key] = stamps
+        stamps = _windowed(_login_failures, acct_key, 3600, now)
         if sum(1 for item in stamps if now - item < 60) >= _limit_config(
             "LOGIN_FAIL_MAX_PER_MINUTE", 5
         ):
             return True
-        return len(stamps) >= _limit_config("LOGIN_FAIL_MAX_PER_HOUR", 20)
+        if len(stamps) >= _limit_config("LOGIN_FAIL_MAX_PER_HOUR", 20):
+            return True
+        ip_stamps = _windowed(_login_failures, ip_key, 3600, now)
+        if sum(1 for item in ip_stamps if now - item < 60) >= _limit_config(
+            "LOGIN_IP_FAIL_MAX_PER_MINUTE", 50
+        ):
+            return True
+        return len(ip_stamps) >= _limit_config("LOGIN_IP_FAIL_MAX_PER_HOUR", 300)
 
 
-def _record_login_failure(key: str) -> None:
+def _record_login_failure(ip_key: str, acct_key: str) -> float:
+    """记录一次密码失败（IP+账号、IP、全站三个桶），返回全站拥挤需要的延迟秒数。"""
     now = time.time()
     with _login_lock:
-        stamps = [item for item in _login_failures.get(key, []) if now - item < 3600]
-        stamps.append(now)
-        _login_failures[key] = stamps
+        for key in (ip_key, acct_key):
+            stamps = _windowed(_login_failures, key, 3600, now)
+            stamps.append(now)
+            _bounded_set(_login_failures, key, stamps)
+        global _global_failures
+        _global_failures = [item for item in _global_failures if now - item < 60]
+        _global_failures.append(now)
+        crowded = len(_global_failures) > _limit_config("LOGIN_GLOBAL_FAIL_PER_MINUTE", 120)
+    # 全站失败拥挤（分布式撞库特征）：统一加延迟拖慢吞吐，但不拒绝
+    return float(_limit_config("LOGIN_GLOBAL_FAIL_DELAY_SECONDS", 2)) if crowded else 0.0
 
 
-def _clear_login_failures(key: str) -> None:
+def _clear_login_failures(ip_key: str, acct_key: str) -> None:
     with _login_lock:
-        _login_failures.pop(key, None)
+        _login_failures.pop(acct_key, None)
+        _login_failures.pop(ip_key, None)
+
+
+def _ticket_issue_limited(account_key: str) -> bool:
+    """otp_ticket 签发限速：成功也计数，防止"取票→试 5 次→再取票"循环爆破。"""
+    now = time.time()
+    with _otp_lock:
+        stamps = _windowed(_ticket_issues, account_key, 60, now)
+        if len(stamps) >= _limit_config("OTP_TICKET_MAX_PER_MINUTE", 3):
+            return True
+        stamps.append(now)
+        _bounded_set(_ticket_issues, account_key, stamps)
+    return False
 
 
 def _too_many_requests(message: str = "尝试次数过多，请稍后再试"):
@@ -133,11 +183,19 @@ def _load_account(user_type: str, username: str) -> Student | Admin | None:
     return db.session.get(Admin, username)
 
 
+# 对不存在的账号也执行一次等价 PBKDF2，消除"账号是否存在"的计时侧信道
+# （存在与否的响应时间曾相差一个数量级：~200ms vs ~20ms）
+_DUMMY_HASH = hash_password_digest("0" * 64)
+
+
 def _check_password(user_type: str, username: str, password_digest: str) -> Student | Admin | None:
     if not PASSWORD_DIGEST_PATTERN.fullmatch(password_digest):
         return None
     account = _load_account(user_type, username)
-    if account is None or not verify_password_digest(account.password_hash, password_digest):
+    if account is None:
+        verify_password_digest(_DUMMY_HASH, password_digest)
+        return None
+    if not verify_password_digest(account.password_hash, password_digest):
         return None
     return account
 
@@ -202,10 +260,10 @@ def _device_token_hash(token: str) -> str:
 
 
 def _trusted_login(account: Student | Admin, user_type: str) -> bool:
-    """该账号在当前设备浏览器或可信来源 IP 上是否处于 OTP 信任期内。
+    """该账号在当前设备浏览器上是否处于 OTP 信任期内（仅认设备 Cookie）。
 
-    顺带惰性清理该账号已过期的信任记录。回环地址（代理转发后的视角）
-    永不作为信任锚点，否则信任记录会放大为"任何来源免 OTP"。
+    不按来源 IP 信任：校园 NAT/VPN 下同出口 IP 的用户会互相"继承"
+    免 OTP 状态，等同绕过动态验证码。顺带惰性清理过期信任记录。
     """
     now = datetime.now()
     rows = TrustedDevice.query.filter_by(
@@ -220,27 +278,25 @@ def _trusted_login(account: Student | Admin, user_type: str) -> bool:
     if not active:
         return False
     cookie_token = request.cookies.get(TRUSTED_DEVICE_COOKIE, "")
-    if cookie_token:
-        token_hash = _device_token_hash(cookie_token)
-        if any(row.token_hash == token_hash for row in active):
-            return True
-    remote_ip = request.remote_addr or ""
-    if remote_ip in _UNTRUSTABLE_IPS:
+    if not cookie_token:
         return False
-    return bool(remote_ip) and any(row.ip == remote_ip for row in active)
+    token_hash = _device_token_hash(cookie_token)
+    return any(row.token_hash == token_hash for row in active)
 
 
 def _remember_trusted_device(account: Student | Admin, user_type: str) -> str:
-    """OTP 验证成功后调用：写入信任记录，返回要发给浏览器的设备令牌。"""
+    """OTP 验证成功后调用：写入信任记录，返回要发给浏览器的设备令牌。
+
+    ip 字段记录真实来源地址（经 XFF 恢复），仅作审计信息，不参与信任匹配。
+    """
     token = secrets.token_urlsafe(32)
     now = datetime.now()
-    remote_ip = request.remote_addr or ""
     db.session.add(
         TrustedDevice(
             user_type=user_type,
             account_id=_account_id_of(account),
             token_hash=_device_token_hash(token),
-            ip="" if remote_ip in _UNTRUSTABLE_IPS else remote_ip,
+            ip=request.remote_addr or "",
             created_at=now,
             expires_at=now + timedelta(days=TRUSTED_DEVICE_DAYS),
         )
@@ -313,23 +369,30 @@ def oauth2_token():
     if user_type is None:
         return jsonify({"detail": "无效的用户类型"}), 400
 
-    rate_key = f"{user_type}:{username}"
+    ip_key = f"ip:{_client_ip()}"
+    acct_key = f"{_client_ip()}:{user_type}:{username}"
+    # 硬限速在校验之前：超限直接 429，不消耗 PBKDF2 算力
+    if _login_rate_limited(ip_key, acct_key):
+        return _too_many_requests()
+
     try:
         account = _check_password(user_type, username, password_digest)
     except Exception:
         db.session.rollback()
         raise
     if account is None:
-        _record_login_failure(rate_key)
-        # 软限速：仅"错误且超限"才 429；正确密码不受失败计数影响
-        if _login_rate_limited(rate_key):
-            return _too_many_requests()
+        delay = _record_login_failure(ip_key, acct_key)
+        if delay:
+            time.sleep(delay)
         return jsonify({"detail": "账号或密码错误"}), 401
-    _clear_login_failures(rate_key)
+    _clear_login_failures(ip_key, acct_key)
     # 信任期内验证过 OTP 的设备：直接发令牌，不再索要 OTP
     if _trusted_login(account, user_type):
         identity = _identity_for(account, user_type)
         return jsonify({"success": True, **_token_payload(identity)})
+    # otp_ticket 签发限速（成功也计数）：防止"取票→试 5 次→再取票"循环爆破
+    if _ticket_issue_limited(f"{user_type}:{username}"):
+        return _too_many_requests("登录尝试过于频繁，请稍后再试")
     return _otp_required_response(account, user_type)
 
 
@@ -367,10 +430,14 @@ def oauth2_token_verify():
 
     if account is None or not check_totp(account, code):
         with _otp_lock:
-            _otp_ticket_failures[ticket_key] = _otp_ticket_failures.get(ticket_key, 0) + 1
+            _bounded_set(
+                _otp_ticket_failures,
+                ticket_key,
+                _otp_ticket_failures.get(ticket_key, 0) + 1,
+            )
             stamps = [item for item in _otp_failures.get(account_key, []) if now - item < 60]
             stamps.append(now)
-            _otp_failures[account_key] = stamps
+            _bounded_set(_otp_failures, account_key, stamps)
             over_limit = len(stamps) > _limit_config("OTP_FAIL_MAX_PER_MINUTE", 10)
         if over_limit:
             return _too_many_requests("验证码尝试过于频繁，请稍后再试")
@@ -403,17 +470,22 @@ def _legacy_login(user_type: str):
     data = request.get_json(silent=True) or {}
     username = data.get("username", "").strip()
     password_digest = data.get("password_hash", "").strip().lower()
-    rate_key = f"{user_type}:{username}"
+    ip_key = f"ip:{_client_ip()}"
+    acct_key = f"{_client_ip()}:{user_type}:{username}"
+    if _login_rate_limited(ip_key, acct_key):
+        return _too_many_requests()
     account = _check_password(user_type, username, password_digest)
     if account is None:
-        _record_login_failure(rate_key)
-        if _login_rate_limited(rate_key):
-            return _too_many_requests()
+        delay = _record_login_failure(ip_key, acct_key)
+        if delay:
+            time.sleep(delay)
         return _json_error("学号或密码错误" if user_type == "student" else "账号或密码错误")
-    _clear_login_failures(rate_key)
+    _clear_login_failures(ip_key, acct_key)
     if _trusted_login(account, user_type):
         identity = _identity_for(account, user_type)
         return jsonify({"success": True, **_token_payload(identity)})
+    if _ticket_issue_limited(f"{user_type}:{username}"):
+        return _too_many_requests("登录尝试过于频繁，请稍后再试")
     return _otp_required_response(account, user_type)
 
 

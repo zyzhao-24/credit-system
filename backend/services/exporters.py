@@ -49,12 +49,13 @@ def xlsx_file_response(
     workbook = openpyxl.Workbook()
     worksheet = workbook.active
     worksheet.title = sheet_title
-    worksheet.append(["" if value is None else str(value) for value in header])
+    # None 写空串；数字保持数字类型（导出列可排序），字符串原样写入
+    worksheet.append(["" if value is None else value for value in header])
     for cell in worksheet[1]:
         cell.font = Font(bold=True)
         cell.alignment = Alignment(horizontal="center")
     for row in rows:
-        worksheet.append(["" if value is None else str(value) for value in row])
+        worksheet.append(["" if value is None else value for value in row])
 
     # 公式注入中和：openpyxl 默认把以 = 开头的字符串写成公式单元格（quotePrefix
     # 不足以阻止，实测仍写入 <f>）；把这类单元格强制改回字符串类型，

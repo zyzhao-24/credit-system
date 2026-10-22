@@ -18,6 +18,7 @@ dependencies = [
     "qrcode[pil]==8.2",
     "cheroot>=11.1.2",
     "nodejs-wheel>=22.12",
+    "h11>=0.14.0",
 ]
 
 [dependency-groups]
