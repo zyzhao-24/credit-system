@@ -10,7 +10,6 @@ instance/
 server.log
 server.pid
 *.pid
-uv.lock
 *.tmp
 temp/
 
