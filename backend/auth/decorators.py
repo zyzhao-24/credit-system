@@ -12,7 +12,9 @@ from backend.auth.jwt import TokenError, decode_token
 
 F = TypeVar("F", bound=Callable[..., Any])
 
-# 一次性票据（OTP 第二步、OTP 绑定确认）不是访问令牌，不做账号级校验
+# 一次性票据（OTP 第二步、OTP 绑定确认）不是访问令牌：直接拒绝。
+# 真正消费票据的端点（/api/auth/token/verify、/api/auth/otp/bind/confirm）
+# 不经过本模块，而是自行 decode_token/decode_pending_otp，不受影响。
 _TICKET_ROLES = frozenset({"otp_pending", "otp_bind_pending"})
 
 # 初始密码未修改（password_reset_required）时仅放行这些端点
@@ -44,16 +46,19 @@ def _load_identity() -> dict[str, Any] | None:
     except TokenError:
         return None
 
-    if identity.get("role") not in _TICKET_ROLES:
-        # 访问令牌必须回查账号：不存在或令牌版本过期（改密/重置/登出）一律作废
-        from backend.extensions import db
-        from backend.models import Admin, Student
+    # 票据不是访问令牌，不得通过任何鉴权装饰器
+    if identity.get("role") in _TICKET_ROLES:
+        return None
 
-        model = Student if identity.get("user_type") == "student" else Admin
-        account = db.session.get(model, identity.get("sub", ""))
-        if account is None or account.token_version != identity.get("tv", -1):
-            return None
-        g.current_account = account
+    # 访问令牌必须回查账号：不存在或令牌版本过期（改密/重置/登出）一律作废
+    from backend.extensions import db
+    from backend.models import Admin, Student
+
+    model = Student if identity.get("user_type") == "student" else Admin
+    account = db.session.get(model, identity.get("sub", ""))
+    if account is None or account.token_version != identity.get("tv", -1):
+        return None
+    g.current_account = account
 
     g.current_identity = identity
     g.current_identity_token = token

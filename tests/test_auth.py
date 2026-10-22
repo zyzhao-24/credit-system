@@ -547,9 +547,10 @@ def test_password_failures_are_rate_limited(raw_app, minimal_payload):
         assert response.status_code == 401
     assert got_429, "连续密码失败未触发限速"
 
-    # 限速期内连正确密码也不再放行
-    blocked = _step1(client, "1002", "pass456", "student")
-    assert blocked.status_code == 429
+    # 软限速：限速期内正确密码仍然放行（攻击者无法把正常用户锁在门外）
+    allowed = _step1(client, "1002", "pass456", "student")
+    assert allowed.status_code == 200
+    assert allowed.get_json().get("otp_required") is True
 
 
 def test_otp_ticket_locked_after_repeated_failures(raw_app, minimal_payload):
@@ -679,3 +680,15 @@ def test_initial_password_forces_change_on_first_login(
     assert step2b.get_json()["password_reset_required"] is False
     fresh = {"Authorization": f"Bearer {step2b.get_json()['access_token']}"}
     assert client.get("/api/student/my_credits", headers=fresh).status_code == 200
+
+
+def test_otp_ticket_is_not_an_access_token(app, database, seed_legacy_payload, minimal_payload):
+    """R-1 回归：otp_ticket 是一次性票据，不得通过任何鉴权装饰器。"""
+    seed_legacy_payload(minimal_payload)
+    client = app.test_client()
+    step1 = _step1(client, "1001", "pass123", "student")
+    ticket = step1.get_json()["otp_ticket"]
+    headers = {"Authorization": f"Bearer {ticket}"}
+    assert client.get("/api/auth/me", headers=headers).status_code == 401
+    assert client.get("/api/student/profile", headers=headers).status_code == 401
+    assert client.get("/api/student/my_credits", headers=headers).status_code == 401

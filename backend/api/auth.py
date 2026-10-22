@@ -66,6 +66,8 @@ _UNTRUSTABLE_IPS = frozenset({"127.0.0.1", "::1"})
 
 # ---- 登录/动态码防爆破限速（按账号计失败次数；生产 remote_addr 恒为回环，
 # ---- 不能按 IP 限速，否则一个攻击者会锁死全部用户） ----
+# 软限速原则：先验证凭据再判定限速，429 只发给"错误且超限"的尝试——
+# 正确密码/验证码永远放行，攻击者无法通过故意失败把正常用户锁在门外。
 _login_failures: dict[str, list[float]] = {}
 _login_lock = threading.Lock()
 _otp_failures: dict[str, list[float]] = {}
@@ -312,9 +314,6 @@ def oauth2_token():
         return jsonify({"detail": "无效的用户类型"}), 400
 
     rate_key = f"{user_type}:{username}"
-    if _login_rate_limited(rate_key):
-        return _too_many_requests()
-
     try:
         account = _check_password(user_type, username, password_digest)
     except Exception:
@@ -322,6 +321,9 @@ def oauth2_token():
         raise
     if account is None:
         _record_login_failure(rate_key)
+        # 软限速：仅"错误且超限"才 429；正确密码不受失败计数影响
+        if _login_rate_limited(rate_key):
+            return _too_many_requests()
         return jsonify({"detail": "账号或密码错误"}), 401
     _clear_login_failures(rate_key)
     # 信任期内验证过 OTP 的设备：直接发令牌，不再索要 OTP
@@ -351,29 +353,27 @@ def oauth2_token_verify():
     account_id = claims.get("sub", "")
     account = _load_account(user_type, account_id)
 
-    # 防爆破：同一票据失败达到上限即作废；同一账号失败频率过高返回 429
+    # 防爆破：同一票据失败达到上限即作废（票据需正确密码才能获取，不构成
+    # 锁定 DoS）；账号级限速采用软限速——先验码，429 只发给错误且超限的尝试
     ticket_key = _device_token_hash(ticket)
     account_key = f"{user_type}:{account_id}"
     now = time.time()
     with _otp_lock:
-        if _otp_ticket_failures.get(ticket_key, 0) >= _limit_config(
+        ticket_dead = _otp_ticket_failures.get(ticket_key, 0) >= _limit_config(
             "OTP_FAIL_MAX_PER_TICKET", 5
-        ):
-            ticket_dead = True
-        else:
-            ticket_dead = False
-        stamps = [item for item in _otp_failures.get(account_key, []) if now - item < 60]
-        _otp_failures[account_key] = stamps
-        account_limited = len(stamps) >= _limit_config("OTP_FAIL_MAX_PER_MINUTE", 10)
+        )
     if ticket_dead:
         return _json_error("验证码错误次数过多，请重新登录", 401)
-    if account_limited:
-        return _too_many_requests("验证码尝试过于频繁，请稍后再试")
 
     if account is None or not check_totp(account, code):
         with _otp_lock:
             _otp_ticket_failures[ticket_key] = _otp_ticket_failures.get(ticket_key, 0) + 1
-            _otp_failures.setdefault(account_key, []).append(now)
+            stamps = [item for item in _otp_failures.get(account_key, []) if now - item < 60]
+            stamps.append(now)
+            _otp_failures[account_key] = stamps
+            over_limit = len(stamps) > _limit_config("OTP_FAIL_MAX_PER_MINUTE", 10)
+        if over_limit:
+            return _too_many_requests("验证码尝试过于频繁，请稍后再试")
         return _json_error("验证码错误，请重新输入")
 
     with _otp_lock:
@@ -404,11 +404,11 @@ def _legacy_login(user_type: str):
     username = data.get("username", "").strip()
     password_digest = data.get("password_hash", "").strip().lower()
     rate_key = f"{user_type}:{username}"
-    if _login_rate_limited(rate_key):
-        return _too_many_requests()
     account = _check_password(user_type, username, password_digest)
     if account is None:
         _record_login_failure(rate_key)
+        if _login_rate_limited(rate_key):
+            return _too_many_requests()
         return _json_error("学号或密码错误" if user_type == "student" else "账号或密码错误")
     _clear_login_failures(rate_key)
     if _trusted_login(account, user_type):

@@ -49,14 +49,24 @@ def xlsx_file_response(
     workbook = openpyxl.Workbook()
     worksheet = workbook.active
     worksheet.title = sheet_title
-    # 与 CSV 一样做公式前缀中和：openpyxl 会把以 = 开头的字符串写成公式单元格，
-    # 学生自填内容（建议/微信号/问卷答案）可能携带 WEBSERVICE/DDE 等载荷
-    worksheet.append([safe_csv_value(value) for value in header])
+    worksheet.append(["" if value is None else str(value) for value in header])
     for cell in worksheet[1]:
         cell.font = Font(bold=True)
         cell.alignment = Alignment(horizontal="center")
     for row in rows:
-        worksheet.append([safe_csv_value(value) for value in row])
+        worksheet.append(["" if value is None else str(value) for value in row])
+
+    # 公式注入中和：openpyxl 默认把以 = 开头的字符串写成公式单元格（quotePrefix
+    # 不足以阻止，实测仍写入 <f>）；把这类单元格强制改回字符串类型，
+    # Excel 中原样显示 "=..." 文本且不会执行（学生自填内容可能携带
+    # WEBSERVICE/DDE 等载荷）
+    for sheet_row in worksheet.iter_rows():
+        for cell in sheet_row:
+            if (
+                isinstance(cell.value, str)
+                and cell.value.startswith(FORMULA_PREFIXES)
+            ):
+                cell.data_type = "s"
 
     output = io.BytesIO()
     workbook.save(output)

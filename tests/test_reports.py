@@ -29,3 +29,24 @@ def test_query_report_and_excel_export(app, database, seed_legacy_payload, minim
     assert worksheet["A1"].value == "学号"
     assert worksheet["E1"].value == "思想品德学分"
     assert worksheet.max_row == 3
+
+
+def test_xlsx_export_neutralizes_formula_injection(app):
+    """M-2/R-4：以 = + - @ 开头的单元格必须写成字符串而非公式，且不带字面 ' 前缀。"""
+    from backend.services.exporters import xlsx_file_response
+
+    with app.test_request_context():
+        response = xlsx_file_response(
+            "t.xlsx",
+            "s",
+            ["学号", "建议"],
+            [("1001", "=WEBSERVICE(\"http://evil\")"), ("1002", "正常文本")],
+        )
+        # 测试上下文里 send_file 是直通模式，关掉才能直接读出字节
+        response.direct_passthrough = False
+        workbook = openpyxl.load_workbook(io.BytesIO(response.get_data()))
+    sheet = workbook.active
+    cell = sheet.cell(row=2, column=2)
+    assert cell.data_type == "s"
+    assert cell.value == "=WEBSERVICE(\"http://evil\")"
+    assert sheet.cell(row=3, column=2).value == "正常文本"
